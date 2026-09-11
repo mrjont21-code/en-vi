@@ -1,0 +1,192 @@
+/* WebDich v0.7 — ultra-minimal, black, thin borders, mobile-first
+ * Layout: LIVE 1/6 | FINAL 3.5/6 | CONTROLS 1.5/6
+ * Each column: fixed header (label + TTS rate slider) + scrollable body
+ */
+:root {
+  --bg: #000000;
+  --line: rgba(255, 255, 255, 0.12);
+  --text: #f2f2f2;
+  --muted: rgba(255, 255, 255, 0.42);
+  --live: rgba(255, 255, 255, 0.6);
+  --mic-off: #3a3a3a;
+  --mic-on: #ffffff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.app {
+  position: relative;
+  height: 100dvh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  margin: 0 auto;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+.version-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 10px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  z-index: 5;
+  font-weight: 500;
+}
+/* ---- LIVE VOICE — 1/6 ---- */
+.live {
+  flex: 0 0 16.6667%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  font-size: clamp(16px, 4.5vw, 22px);
+  font-weight: 300;
+  color: var(--live);
+  text-align: center;
+  overflow: hidden;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.live.status {
+  color: rgba(255, 130, 130, 0.85);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+/* ---- FINAL — 3.5/6, two columns ---- */
+.final {
+  flex: 0 0 58.3333%;
+  min-height: 0;
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+.col {
+  flex: 1 1 50%;
+  min-width: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+.col + .col { border-left: 1px solid var(--line); }
+.col.hidden { display: none; }
+.col-header {
+  flex: 0 0 auto;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.col-label {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* TTS rate slider — minimal dark */
+.rate-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.4);
+}
+.rate-ctrl input[type="range"] {
+  flex: 1 1 auto;
+  accent-color: #ffffff;
+  height: 2px;
+  cursor: pointer;
+  margin: 0;
+}
+.rate-ctrl span:last-child { min-width: 30px; text-align: right; }
+/* Phase 2: each row cell = final (source, gray) + trans (target, white, below) */
+.row-cell { margin-bottom: 14px; }
+.col p {
+  font-size: 15px;
+  line-height: 1.6;
+  font-weight: 400;
+  word-break: break-word;
+}
+.final-text { color: rgba(255, 255, 255, 0.5); margin-bottom: 4px; } /* source = gray */
+.trans-text { color: #ffffff; margin-bottom: 0; }                   /* translation = white */
+/* ---- CONTROLS — 1.5/6: EN toggle | MIC | VI toggle ---- */
+.mic-row {
+  flex: 0 0 25%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+}
+.channel-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--mic-off);
+  color: #9a9a9a;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.channel-btn.on { background: #ffffff; color: #000000; }
+.channel-btn:active { transform: scale(0.92); }
+#mic {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--mic-off);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: background 0.2s ease, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+#mic.on { background: var(--mic-on); }
+#mic:active { transform: scale(0.94); }
+#mic svg { width: 26px; height: 26px; display: block; margin: 0 auto; }
+#mic .mic-stroke { stroke: #9a9a9a; transition: stroke 0.2s ease; }
+#mic.on .mic-stroke { stroke: #000000; }
+#mic.on::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  animation: wd-pulse 2.2s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes wd-pulse {
+  0%   { transform: scale(0.92); opacity: 0.9; }
+  100% { transform: scale(1.3);  opacity: 0; }
+}
+@media (max-width: 380px) {
+  .mic-row { gap: 22px; }
+  .channel-btn { width: 40px; height: 40px; font-size: 11px; }
+  #mic { width: 56px; height: 56px; }
+  #mic svg { width: 22px; height: 22px; }
+  .col p { font-size: 14px; }
+}

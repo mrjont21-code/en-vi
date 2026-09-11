@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>WebDich v0.8 — Modular Voice → Text + Translate + TTS</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <div id="live" class="live" aria-live="polite"></div>
+    <div class="final">
+      <div id="final-en" class="col">
+        <div class="col-header">
+          <div class="col-label">Final English</div>
+          <div class="rate-ctrl">
+            <span>TTS</span>
+            <input type="range" id="rate-en" min="1" max="1.2" step="0.05" value="1.1" aria-label="TTS speed English">
+            <span id="rate-en-val">1.1×</span>
+          </div>
+        </div>
+        <div class="col-body" id="body-en"></div>
+      </div>
+      <div id="final-vi" class="col">
+        <div class="col-header">
+          <div class="col-label">Final Vietnamese</div>
+          <div class="rate-ctrl">
+            <span>TTS</span>
+            <input type="range" id="rate-vi" min="1" max="1.2" step="0.05" value="1.1" aria-label="TTS speed Vietnamese">
+            <span id="rate-vi-val">1.1×</span>
+          </div>
+        </div>
+        <div class="col-body" id="body-vi"></div>
+      </div>
+    </div>
+    <div class="mic-row">
+      <button id="ch-en" class="channel-btn on" aria-label="Toggle English channel" aria-pressed="true">EN</button>
+      <button id="mic" aria-label="Toggle microphone" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect class="mic-stroke" x="9" y="3" width="6" height="11" rx="3"/>
+          <path class="mic-stroke" d="M5 11a7 7 0 0 0 14 0"/>
+          <line class="mic-stroke" x1="12" y1="18" x2="12" y2="22"/>
+        </svg>
+      </button>
+      <button id="ch-vi" class="channel-btn on" aria-label="Toggle Vietnamese channel" aria-pressed="true">VI</button>
+    </div>
+    <div id="version-badge" class="version-badge"></div>
+  </div>
+  <script src="js/state.js"></script>
+  <script src="js/text.js"></script>
+  <script src="js/language.js"></script>
+  <script src="js/asr.js"></script>
+  <script src="js/translation.js"></script>
+  <script src="js/tts.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
