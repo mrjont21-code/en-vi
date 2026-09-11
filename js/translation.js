@@ -8,14 +8,21 @@
   var text = (root.WD && root.WD.text) || (typeof require !== 'undefined' && require('./text.js'));
   function translate(textStr, from, to, cb) {
     if (!textStr) { cb(''); return; }
-    var gtx = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + from + '&tl=' + to + '&dt=t&q=' + encodeURIComponent(textStr);
+    // v0.8.1.2 fix: Google gtx with sl=auto — auto-detect source language, never translate wrong direction.
+    var gtx = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + to + '&dt=t&q=' + encodeURIComponent(textStr);
     fetch(gtx).then(function (r) { return r.json(); }).then(function (j) {
       var t = '';
       if (j && j[0]) j[0].forEach(function (s) { if (s && s[0]) t += s[0]; });
-      cb(t || '');
+      if (t && t.indexOf('MYMEMORY') < 0) cb(t); else cb('');
     }).catch(function () {
-      var mm = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(textStr) + '&langpair=' + from + '|' + to;
-      fetch(mm).then(function (r) { return r.json(); }).then(function (j) { cb((j && j.responseData && j.responseData.translatedText) || ''); }).catch(function () { cb(''); });
+      // MyMemory fallback: detect source language properly (auto if available), filter warning strings.
+      var fromLang = from;
+      try { var L = root.WD && root.WD.language; if (L) { var d = L.detectLanguage(textStr); if (d.lang === 'vi' || d.lang === 'en') fromLang = d.lang; } } catch (e) {}
+      var mm = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(textStr) + '&langpair=' + fromLang + '|' + to;
+      fetch(mm).then(function (r) { return r.json(); }).then(function (j) {
+        var t = (j && j.responseData && j.responseData.translatedText) || '';
+        if (t && t.indexOf('MYMEMORY WARNING') < 0 && t.indexOf('QUERY LENGTH') < 0) cb(t); else cb('');
+      }).catch(function () { cb(''); });
     });
   }
   // Translate one cell; skip if source unchanged. Race guard via _requestId.

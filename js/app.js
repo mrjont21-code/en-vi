@@ -11,7 +11,7 @@
     asr = require('./asr.js'); translation = require('./translation.js'); tts = require('./tts.js'); ui = require('./ui.js');
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MS = 350, FAST_CONF = 0.8, LOCK_MS = 600;
-  var VERSION = 'v0.8.1.1', BUILD = '20260911-1000';
+  var VERSION = 'v0.8.1.2', BUILD = '20260912-0710';
 
   // ---------- row helpers ----------
   function ensureActiveRow() {
