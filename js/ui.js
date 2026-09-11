@@ -40,6 +40,12 @@
       pt.textContent = cell.trans;
       wrap.appendChild(pt);
     }
+    if (cell.idiom) {
+      var pi = root.document.createElement('p');
+      pi.className = 'idiom-text';
+      pi.textContent = 'Nghĩa: ' + cell.idiom;
+      wrap.appendChild(pi);
+    }
     colEl.appendChild(wrap);
   }
   function renderRows() {

@@ -11,7 +11,7 @@
     asr = require('./asr.js'); translation = require('./translation.js'); tts = require('./tts.js'); ui = require('./ui.js');
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MS = 350, FAST_CONF = 0.8, LOCK_MS = 600;
-  var VERSION = 'v0.8.1.2', BUILD = '20260912-0710';
+  var VERSION = 'v0.9.0', BUILD = '20260912-0730';
 
   // ---------- row helpers ----------
   function ensureActiveRow() {
@@ -42,6 +42,12 @@
       appendToCell(state.channel.en ? 'en' : 'vi', seg);
     }
     ui.renderRows();
+    // v0.9: detect local idioms (instant, no API) — show meaning below translation
+    var idioms = WD.idioms || (typeof require !== 'undefined' && require('./idioms.js'));
+    if (idioms && idioms.detectVi) {
+      if (state.activeRow.vi.final) state.activeRow.vi.idiom = idioms.detectVi(state.activeRow.vi.final).join('; ');
+      else state.activeRow.vi.idiom = '';
+    }
     translation.scheduleTranslateActive(400, onTranslatedDisplay); // incremental UI display only
   }
   function onTranslatedDisplay() { ui.renderRows(); }
