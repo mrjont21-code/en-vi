@@ -11,7 +11,7 @@
     asr = require('./asr.js'); translation = require('./translation.js'); tts = require('./tts.js'); ui = require('./ui.js');
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MS = 350, FAST_CONF = 0.8, LOCK_MS = 600;
-  var VERSION = 'v0.8.0', BUILD = '20260911-0930';
+  var VERSION = 'v0.8.1.1', BUILD = '20260911-1000';
 
   // ---------- row helpers ----------
   function ensureActiveRow() {
@@ -29,8 +29,15 @@
     if (!seg) return;
     ensureActiveRow();
     if (state.channel.en && state.channel.vi) {
-      var segs = language.splitByLanguage(seg);
-      for (var i = 0; i < segs.length; i++) appendToCell(segs[i].lang === 'vi' ? 'vi' : 'en', segs[i].text);
+      var segs = language.segmentDual(seg); // v0.8.1.1: context-smoothed dual-language segmentation
+      for (var i = 0; i < segs.length; i++) {
+        if (segs[i].lang === 'unknown') {
+          appendToCell('en', segs[i].text); // unknown → keep in both, never force to EN
+          appendToCell('vi', segs[i].text);
+        } else {
+          appendToCell(segs[i].lang === 'vi' ? 'vi' : 'en', segs[i].text);
+        }
+      }
     } else {
       appendToCell(state.channel.en ? 'en' : 'vi', seg);
     }

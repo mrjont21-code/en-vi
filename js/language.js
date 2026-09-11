@@ -98,7 +98,45 @@
     if (en > vi) return { lang: 'en', confidence: en / total };
     return { lang: 'unknown', confidence: 0 };
   }
-  var mod = { classifyWord: classifyWord, splitByLanguage: splitByLanguage, candidateScore: candidateScore, pickWinner: pickWinner, detectLanguage: detectLanguage, hasDiacritics: hasDiacritics, countInList: countInList };
+  // v0.8.1.1: three-state classifier. Weak tokens (no dictionary/diacritic signal) = unknown, NOT forced to en.
+  function classifyWord3(w) {
+    var low = stripPunct((w || '').toLowerCase());
+    if (!low) return { lang: 'unknown', strong: false };
+    if (VI_DIACRITIC_RE.test(w)) return { lang: 'vi', strong: true };
+    if (VI_STOP.indexOf(low) >= 0) return { lang: 'vi', strong: true };
+    if (EN_STOP.indexOf(low) >= 0) return { lang: 'en', strong: true };
+    if (NON_ASCII_RE.test(w)) return { lang: 'vi', strong: false }; // lexical pattern, weak
+    return { lang: 'unknown', strong: false };
+  }
+  // v0.8.1.1: dual-language segmentation with context smoothing.
+  // Only a STRONG token may create a language transition. Weak/unknown tokens follow the current segment
+  // (context). This prevents fragmentation from classifier flicker. Invariant: join(segments) === input.
+  function segmentDual(text) {
+    var words = (text || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    var segs = [], curLang = null, curWords = [];
+    function flush() {
+      if (!curWords.length) return;
+      segs.push({ lang: curLang || 'unknown', text: curWords.join(' ') });
+      curWords = [];
+    }
+    for (var i = 0; i < words.length; i++) {
+      var c = classifyWord3(words[i]);
+      if (curLang === null) {
+        if (c.strong) curLang = c.lang;
+        curWords.push(words[i]);
+      } else if (c.strong && c.lang !== curLang) {
+        flush();
+        curLang = c.lang;
+        curWords.push(words[i]);
+      } else {
+        curWords.push(words[i]); // weak/unknown → follow current segment (context)
+      }
+    }
+    flush();
+    return segs;
+  }
+  var mod = { classifyWord: classifyWord, classifyWord3: classifyWord3, splitByLanguage: splitByLanguage, segmentDual: segmentDual, candidateScore: candidateScore, pickWinner: pickWinner, detectLanguage: detectLanguage, hasDiacritics: hasDiacritics, countInList: countInList };
   root.WD = root.WD || {};
   root.WD.language = mod;
   if (typeof module !== 'undefined' && module.exports) module.exports = mod;
