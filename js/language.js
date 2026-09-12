@@ -1,9 +1,12 @@
-/* WebDich v0.8 — language.js: pure language detection & dual-ASR scoring.
+/* WebDich v0.9.3 — language.js: pure language detection & dual-ASR scoring.
  * No LLM, no API, no TTS. Input text → output {lang, confidence}.
+ * Fixes v0.9.3:
+ *  - VI_DIACRITIC_RE now case-insensitive: "TÔI MUỐN", "ĐẸP" correctly detected as VI
  */
 (function (root) {
   'use strict';
-  var VI_DIACRITIC_RE = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/;
+  // v0.9.3: case-insensitive — uppercase diacritics (ÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ)
+  var VI_DIACRITIC_RE = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]/;
   var NON_ASCII_RE = /[^\x00-\x7F]/;
   var VI_STOP = ['tôi','bạn','xin','chào','là','có','không','đi','đến','một','người','đây','đó',
     'gì','nào','mình','anh','chị','em','được','rồi','đang','sẽ','vì','nhưng','mà','và','với','từ',
@@ -37,13 +40,17 @@
     'against','between','through','during','before','above','below','down','out','off','under',
     'further','once','which','who','whom','whose','hi','hey','oh','wow','uh','um','hmm','how','are',
     'you','about','back','alarm','going','america'];
+
   function hasDiacritics(t) { return VI_DIACRITIC_RE.test(t || ''); }
+
   function countInList(text, list) {
     var words = (text || '').toLowerCase().split(' '), n = 0;
     for (var i = 0; i < words.length; i++) if (list.indexOf(stripPunct(words[i])) >= 0) n++;
     return n;
   }
+
   function stripPunct(w) { return w.replace(/[.,!?;:()"'\[\]{}<>]/g, ''); }
+
   function classifyWord(w) {
     var low = stripPunct((w || '').toLowerCase());
     if (!low) return null;
@@ -53,6 +60,7 @@
     if (NON_ASCII_RE.test(w)) return 'vi';
     return 'en';
   }
+
   function splitByLanguage(text) {
     var words = (text || '').trim().split(' ').filter(Boolean);
     var segs = [], curLang = null, curWords = [];
@@ -65,6 +73,7 @@
     if (curLang !== null) segs.push({ lang: curLang, text: curWords.join(' ') });
     return segs;
   }
+
   function candidateScore(c, lang) {
     if (!c || !c.text) return -999;
     var words = c.text.split(/\s+/).filter(Boolean).length || 1;
@@ -77,12 +86,14 @@
     s += Math.min(words, 12) * 0.01;
     return s;
   }
+
   function pickWinner(en, vi) {
     var sEn = candidateScore(en, 'en'), sVi = candidateScore(vi, 'vi');
     if (sEn < -900 && sVi < -900) return null;
-    if (sVi >= sEn) return { lang: 'vi', text: vi.text };
-    return { lang: 'en', text: en.text };
+    if (sVi >= sEn) return { lang: 'vi', text: vi ? vi.text : '' };
+    return { lang: 'en', text: en ? en.text : '' };
   }
+
   // Standalone detection: input text → {lang, confidence}. confidence 0..1.
   function detectLanguage(text) {
     if (!text || !text.trim()) return { lang: 'unknown', confidence: 0 };
@@ -98,19 +109,19 @@
     if (en > vi) return { lang: 'en', confidence: en / total };
     return { lang: 'unknown', confidence: 0 };
   }
-  // v0.8.1.1: three-state classifier. Weak tokens (no dictionary/diacritic signal) = unknown, NOT forced to en.
+
+  // v0.8.1.1: three-state classifier. Weak tokens = unknown, NOT forced to en.
   function classifyWord3(w) {
     var low = stripPunct((w || '').toLowerCase());
     if (!low) return { lang: 'unknown', strong: false };
     if (VI_DIACRITIC_RE.test(w)) return { lang: 'vi', strong: true };
     if (VI_STOP.indexOf(low) >= 0) return { lang: 'vi', strong: true };
     if (EN_STOP.indexOf(low) >= 0) return { lang: 'en', strong: true };
-    if (NON_ASCII_RE.test(w)) return { lang: 'vi', strong: false }; // lexical pattern, weak
+    if (NON_ASCII_RE.test(w)) return { lang: 'vi', strong: false };
     return { lang: 'unknown', strong: false };
   }
+
   // v0.8.1.1: dual-language segmentation with context smoothing.
-  // Only a STRONG token may create a language transition. Weak/unknown tokens follow the current segment
-  // (context). This prevents fragmentation from classifier flicker. Invariant: join(segments) === input.
   function segmentDual(text) {
     var words = (text || '').trim().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
@@ -130,12 +141,13 @@
         curLang = c.lang;
         curWords.push(words[i]);
       } else {
-        curWords.push(words[i]); // weak/unknown → follow current segment (context)
+        curWords.push(words[i]);
       }
     }
     flush();
     return segs;
   }
+
   var mod = { classifyWord: classifyWord, classifyWord3: classifyWord3, splitByLanguage: splitByLanguage, segmentDual: segmentDual, candidateScore: candidateScore, pickWinner: pickWinner, detectLanguage: detectLanguage, hasDiacritics: hasDiacritics, countInList: countInList };
   root.WD = root.WD || {};
   root.WD.language = mod;
