@@ -27,7 +27,9 @@
     return { interim: interim.trim(), final: finalText.trim(), conf: confN ? confSum / confN : 0 };
   }
 
-  function makeRecognizer(lang, handlers) {
+  // v0.9.5a: autoStart param; caller can set refs before starting to avoid onend race
+  function makeRecognizer(lang, handlers, autoStart) {
+    if (autoStart === undefined) autoStart = true;
     var r = new SR();
     r.continuous = true;
     r.interimResults = true;
@@ -40,9 +42,10 @@
     if (handlers.onspeechend) r.onspeechend = handlers.onspeechend;
     if (handlers.onspeechstart) r.onspeechstart = handlers.onspeechstart;
     if (handlers.onaudioend) r.onaudioend = handlers.onaudioend;
-    try { r.start(); } catch (e) {}
+    if (autoStart) { try { r.start(); } catch (e) {} }
     return r;
   }
+  function startRecognizer(r) { if (r) { try { r.start(); } catch (e) {} } }
 
   // handlers: { onresult(e), onend(), onerror(e) }
   function startEN(handlers) {
@@ -60,7 +63,7 @@
   function startSingle(lang, handlers) {
     if (!supported) return null;
     state.lastStartTs = Date.now();
-    try { return makeRecognizer(lang, handlers); } catch (e) { return null; }
+    try { return makeRecognizer(lang, handlers, false); } catch (e) { return null; }
   }
 
   function stopAll() {
@@ -73,6 +76,7 @@
 
   var mod = {
     supported: supported, extractResult: extractResult, makeRecognizer: makeRecognizer,
+    startRecognizer: startRecognizer,
     startEN: startEN, startVI: startVI, startSingle: startSingle,
     stopAll: stopAll, stopEN: stopEN, stopVI: stopVI
   };
