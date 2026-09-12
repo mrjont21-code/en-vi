@@ -24,7 +24,7 @@
     _lastSpokenTranslation: ''
   };
   S.newRow = function () {
-    return { en: { final: '', trans: '', _last: '', _requestId: 0 }, vi: { final: '', trans: '', _last: '', _requestId: 0 }, finalized: false };
+    return { en: { final: '', trans: '', _last: '', _requestId: 0, _spoken: false }, vi: { final: '', trans: '', _last: '', _requestId: 0, _spoken: false }, finalized: false };
   };
   S.reset = function () {
     S.micOn = false; S.userStopped = false; S.recEN = null; S.recVI = null; S.viFailed = false;

@@ -11,7 +11,7 @@
     asr = require('./asr.js'); translation = require('./translation.js'); tts = require('./tts.js'); ui = require('./ui.js');
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MS = 350, FAST_CONF = 0.8, LOCK_MS = 600;
-  var VERSION = 'v0.9.0', BUILD = '20260912-0730';
+  var VERSION = 'v0.9.1', BUILD = '20260912-0745';
 
   // ---------- row helpers ----------
   function ensureActiveRow() {
@@ -57,8 +57,9 @@
     if (!row) return;
     row.finalized = true;
     translation.translateRow(row, onTranslatedDisplay);
-    if (row.en.trans) tts.speak(row.en.trans, 'vi-VN'); // TTS only on FINAL, deduped by _lastSpokenTranslation
-    if (row.vi.trans) tts.speak(row.vi.trans, 'en-US');
+    // v0.9.1: each cell's final translation spoken ONCE only (per-cell _spoken flag).
+    if (row.en.trans && !row.en._spoken) { row.en._spoken = true; tts.speak(row.en.trans, 'vi-VN'); }
+    if (row.vi.trans && !row.vi._spoken) { row.vi._spoken = true; tts.speak(row.vi.trans, 'en-US'); }
     ui.renderRows();
   }
 
@@ -124,7 +125,7 @@
   function startChunkTimer() {
     stopChunkTimer();
     state.chunkTimer = setInterval(function () {
-      if (state.activeRow && (state.activeRow.en.final || state.activeRow.vi.final)) finalizeRow(state.activeRow);
+      if (state.activeRow && !state.activeRow.finalized && (state.activeRow.en.final || state.activeRow.vi.final)) finalizeRow(state.activeRow);
       flushPending();
     }, CHUNK_MS);
   }
@@ -148,6 +149,7 @@
     state.needRestart = { en: false, vi: false };
     if (state.activeRow && (state.activeRow.en.final || state.activeRow.vi.final)) finalizeRow(state.activeRow);
     asr.stopAll();
+    if (root.speechSynthesis) { try { root.speechSynthesis.cancel(); } catch (e) {} } // clear TTS queue on mic off
     ui.updateMicUI(); ui.clearLive(); ui.renderRows();
   }
 
