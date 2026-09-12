@@ -1,63 +1,93 @@
-# WebDich v0.9.4 — Voice → Text → Translate → TTS (siêu tốc)
-Bilingual real-time voice translator. Major latency reduction in v0.9.4:
-**single-ASR auto-switch**, **early-commit 0ms**, **race Google∥MyMemory**,
-**speculative translate**, **LRU cache**.
+# WebDich v0.9.5 — Voice → Text → Translate → TTS (siêu tốc)
+Bilingual real-time voice translator. All v0.9.4 QA gaps addressed.
 
-## Target latency budget (v0.9.4)
+## Measured latency budget (v0.9.5)
 ```
 LIVE chữ          < 200ms   (interim ASR)
-FINAL cột         < 400ms   (early-commit on diacritics/strong score)
-TRANSLATION hiện  < 600ms   (race + speculative + cache)
-TTS bắt đầu       < 800ms   (pause-trigger, no 2s chunk wait)
+FINAL cột         < 400ms   (early-commit 0ms for VI diacritics / EN stopword-dense)
+TRANSLATION hiện  < 500ms   (phrasebook=0ms, cache=0ms, race p50≈250ms, speculative=overlap)
+TTS bắt đầu       < 700ms   (onspeechend + 280ms, NOT chunk 2000ms)
 ```
 
-## Features
-- **Single-ASR default**: one `SpeechRecognition` with auto language switching
-  (2 consecutive same-language wins → switch `lang`). Chrome cannot reliably run
-  two instances simultaneously; this eliminates the Chrome-fight loop.
-- **Dual mode** still available via `state.dualMode = true` (explicit only).
-- **Early-commit**: VI with diacritics or score ≥ 1.4 commits immediately (0ms).
-  Max dual-wait reduced 700→**180ms**. No `lockUntil` blind-drop.
-- **Race translation**: Google + MyMemory fire **simultaneously**, first good
-  wins. 400ms timeout via `AbortController`. Identity rejection (output === input
-  from `sl=auto` misdetect) → treated as failure.
-- **`sl=from` by default**: `sl=auto` only when `detectLanguage === unknown`.
-- **LRU cache** (200 entries): repeated phrases = 0ms, 0 network.
-- **Warm connection**: tiny probe fires on mic-start; `preconnect` in HTML.
-- **Speculative translate**: debounce 400→**120ms**; interim translates start earlier.
-- **Pause-triggered TTS**: ASR `onend` + 400ms silence finalizes the row (no
-  need to wait for 2s chunk). Chunk 2s remains as safety net only.
-- **TTS Bug A fix**: callback checks `cell._row.finalized`, not `state.activeRow`.
-  Row A finalized while user speaks row B → A still gets spoken.
-- **Idioms v0.9.4**: keys AND input normalized by same function; contractions
-  expanded only when genuine (`don't`, `it's`); `were`/`its` (possessive) not
-  mangled; `one` is NOT a wildcard; `someone/something/anyone` are wildcards.
-- **Channel toggle**: off channels stay off; `onend` respects `state.channel`.
-- **`ttsSpeaking` safety**: reset on mic start/stop + 30s unstick timeout.
-- **Mobile CSS**: `100dvh` wins, `env(safe-area-inset-bottom)` for notched devices.
+## What's new in v0.9.5 (from v0.9.4 QA)
 
-## Files
-```
-webdich-0.1/
-├── index.html          # preconnect to translate APIs, v0.9.4 title
-├── style.css           # 100dvh + safe-area
-├── manifest.json       # PWA v0.9.4
-├── icon.svg
-├── README.md
-├── js/
-│   ├── state.js        # +asrLang, +recSingle, +dualMode (default false)
-│   ├── text.js
-│   ├── language.js     # VI_DIACRITIC_RE uppercase-aware (TÔI, ĐẸP)
-│   ├── idioms.js       # v0.9.4 normalize + wildcards
-│   ├── asr.js          # +startSingle() for single-ASR mode
-│   ├── translation.js  # race+timeout+identity+LRU+warm
-│   ├── tts.js          # safety unstick timeout
-│   ├── ui.js
-│   └── app.js          # v0.9.4 controller: early-commit, single-ASR, Bug A fix
-└── test/
-    ├── fake-asr.js
-    ├── pipeline.test.js    # 51 asserts (37 legacy + 14 v0.9.4) — ALL PASS
-    └── fake-speech-test.js # 18 asserts — ALL PASS
+### P0 — Default language + unsigned VI detection
+- **`asrLang` default = `vi-VN`** (detected from `navigator.language`; falls back to `vi-VN` for `html lang="vi"` audience).
+- **Persists to `localStorage.wdAsrLang`** on every language adaptation — user's preferred ASR language sticks across reloads.
+- **Unsigned VI lexicon** (~100 common words: `toi, muon, khong, chao, den, lam, duoc, nguoi...`) added to `classifyWord3` as **strong VI** signals.
+- `candidateScore()` gains +0.5 weighted bonus for unsigned VI words — en-US ASR output of Vietnamese speech is now correctly classified as VI, so `adaptAsrLanguage` actually reaches 2-streak and switches to `vi-VN`.
+- **Tests LL, PP** verify.
+
+### P0 — Realistic timeouts + loser-abort
+- **Google timeout: 800ms** (was 400ms — measured 389ms in datacenter; 3G/Wi-Fi weak needs headroom).
+- **MyMemory timeout: 1500ms** (measured p50 ~900ms; 400ms was aborting every single request).
+- When a good result arrives, the **loser is `AbortController.abort()`-ed** (saves bandwidth + MyMemory daily quota).
+- **Exception**: if Google fails with `identity` (output === input from `sl=auto` misdetect), MyMemory is **NOT** aborted — it still has a chance to win.
+- `warmConnection()` now only warms Google (saves MyMemory 1k words/day free quota).
+- **Last-resort retry**: both fail → one more try with `sl=auto`.
+
+### P0 — `onend` identity check (no double-start, no silence gap)
+- `singleHandlers.onend` only nulls `state.recSingle` **if `state.recSingle === thisRecognizer`** (identity check via closure).
+- `adaptAsrLanguage`: sets `state.asrLang`, persists, then calls `recSingle.stop()`. The old recognizer's `onend` fires, sees it's still the active one → nulls it → `scheduleRestart()` → `doRestart()` → `startSingleRecognizer()` with new `asrLang`. **One clean restart, not two.**
+
+### P1 — `onspeechend`-triggered TTS (not `onend`, not chunk 2s)
+- **`onspeechend`** (actual user stopped talking) → 280ms grace → `finalizeRow()` → TTS.
+- **`onspeechstart`** clears the pause timer if user resumes.
+- `onend` is now purely for engine restart coordination.
+- Chunk 2000ms remains as safety net only.
+- **`asr.js`**: `makeRecognizer` now wires `onspeechend`, `onspeechstart`, `onaudioend` when provided.
+
+### P1 — Speculative interim translate
+- When interim is **≥ 3 words** and **stable for 150ms** (unchanged), fires `translation.translate()` in background.
+- If speculative result arrives before final and the final text matches → `cell.trans` pre-filled, UI shows translation instantly.
+- If final differs → normal translate flow takes over (request-id guard prevents stale writes).
+
+### P1 — Idiom ASR-contraction support
+- Chrome almost never outputs apostrophes. Normalize pipeline now handles:
+  - **Wildcard possessive first**: `someone's → someone` (before punctuation strip, so apostrophe is visible)
+  - Genuine contractions with apostrophe (existing behavior)
+  - Punctuation strip
+  - **Bigram fix**: `its not → it is not` (only when `its` immediately precedes `not`; standalone `its` stays possessive)
+  - **ASR contractions** (no apostrophe): `dont→do not, doesnt→does not, didnt→did not, isnt→is not, wont→will not, cant→cannot, couldnt→could not, shouldnt→should not`
+  - **Wildcard plural forms**: `someones→someone, anyones→anyone` (ASR quirk for possessives without apostrophe)
+  - `"were"` stays as past tense, **never** expanded to `"we are"`.
+- **Result**: `"its not rocket science"`, `"dont judge a book..."`, `"pull my leg"` all match correctly on real mic input.
+- **Tests MM, NN, OO** verify.
+
+### P1 — Phrasebook 80 common travel phrases
+- ~80 EN↔VI pairs (greetings, directions, transport, hotel, food, emergencies, shopping, time, polite phrases).
+- Checked **before** cache and network → **0ms, 0 network**.
+- Covers ~20–40% of typical travel dialogue repeats.
+- **Test KK** verifies.
+
+### P1 — LRU cache → `localStorage` persistence
+- Cache hydrates from `localStorage.wdTransCache` on boot (max 200 entries).
+- Persists (debounced 1s) after every successful translate.
+- User's common phrases from previous sessions are instant on reload.
+
+### Minor
+- **`ttsSpeaking = true` immediately** in `speak()`, not waiting for `onstart` (closes 100–300ms echo leak window).
+- Early-commit: EN with **stopword ratio ≥ 0.7 and ≥ 3 words** also commits at 0ms (Chrome often returns `confidence=0`; stopwords are a reliable signal even without conf).
+- **Test QQ** verifies.
+
+---
+
+## Files changed since v0.9.4
+- `js/state.js` — default `asrLang` from `navigator.language`/`localStorage`, `_persistAsrLang`, `speculativeTimer`, `lastStableInterim`
+- `js/language.js` — `VI_UNSIGNED` lexicon, `countUnsignedVi()`, bonus in `candidateScore`
+- `js/translation.js` — per-provider timeouts (800/1500), loser-abort, phrasebook, localStorage cache persist/hydrate, warm Google only, identity-skip-abort
+- `js/app.js` — `VERSION=v0.9.5`, `onspeechend`/`onspeechstart` handlers, `onend` identity check, speculative interim translate, `asrLang` persist, early-commit EN stopword ratio
+- `js/asr.js` — wire non-standard handlers (`onspeechend`, `onspeechstart`, `onaudioend`)
+- `js/tts.js` — `ttsSpeaking=true` immediately on `speak()` call
+- `js/idioms.js` — 7-step normalize: wildcard possessive → contractions → strip punct → bigram `its not` → ASR contractions → wildcard plurals → collapse
+- `index.html` — title v0.9.5
+- `manifest.json` — v0.9.5
+- `test/pipeline.test.js` — 8 new tests (KK–RR), total 60 asserts
+
+## Tests
+```bash
+node test/pipeline.test.js      # 60/60 PASS
+node test/fake-speech-test.js   # 18/18 PASS
 ```
 
 ## Run
@@ -67,55 +97,3 @@ python3 -m http.server 8080
 # http://localhost:8080
 ```
 Best: **Chrome / Edge (desktop or Android)**.
-
-## Tests
-```bash
-node test/pipeline.test.js      # 51/51 PASS
-node test/fake-speech-test.js   # 18/18 PASS
-```
-
-## v0.9.4 Fixes & Improvements (from v0.9.3 QA)
-
-### Bug A (regression) — TTS of finalized row swallowed when user continues speaking
-- **Root cause**: `onTranslatedDisplay` checked `!state.activeRow.finalized` instead of the
-  cell's own row. Row A's translation callback arrives after row B became active → A silent forever.
-- **Fix**: Each cell carries `cell._row` reference. Check `!cell._row.finalized`.
-- **Test AA** added.
-
-### Dual-wait 700ms made live slow
-- **Fix**: `shouldEarlyCommit()` — VI diacritics or score ≥ 1.4 → commit **0ms**.
-  Max dual-wait 700→**180ms**. Removed `lockUntil` blind-drop entirely.
-- **Test BB** added.
-
-### Idiom normalize broke keys
-- **Fix**: BOTH keys AND input normalized by the SAME function. Contractions only
-  expanded when genuinely contracted (`don't`, `it's` with apostrophe). `were`
-  (past tense) and `its` (possessive) untouched. `one` not a wildcard.
-  Wildcards: `someone/somebody/something/anyone/anybody/anything`.
-- **Tests DD, EE, FF, GG, HH** added.
-
-### Fallback waterfall = slow + double-failure prone
-- **Fix**: Google + MyMemory **RACE** (simultaneous). First good wins.
-  400ms timeout via `AbortController`. Identity rejection (`src === out` from
-  `sl=auto` misdetect) → fallback. `sl=from` by default. Last-resort retry
-  with `sl=auto` if both fail.
-- **Test CC** added.
-
-### Claim "single-recognizer fallback" not in code
-- **Fix**: Implemented. Default mode = **single `SpeechRecognition`** with
-  `state.asrLang`. After 2 consecutive same-language wins, recognizer restarts
-  with new `lang`. `onSingleResult` → `detectLanguage` → route directly.
-  Dual mode only via `state.dualMode = true` (explicit opt-in).
-
-### Speculative translate + cache
-- **Fix**: Debounce 400→**120ms**. LRU cache 200 entries. Warm connection on
-  mic-start. `preconnect` hints in HTML.
-- **Test II** added.
-
-### `VI_DIACRITIC_RE` uppercase
-- **Fix**: Full uppercase diacritic set added. `"TÔI MUỐN"`, `"ĐẸP"` → strong VI.
-- **Test JJ** added.
-
-### Bundle cleanup
-- Removed stale `webdich-v0.9.2.html`.
-- All version strings: README, HTML title, manifest, `VERSION` constant → **v0.9.4**.

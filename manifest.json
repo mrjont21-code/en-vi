@@ -1,8 +1,8 @@
 {
-  "name": "WebDich v0.9.4 — Voice → Text + Translate + TTS",
+  "name": "WebDich v0.9.5 — Voice → Text + Translate + TTS (siêu tốc)",
   "short_name": "WebDich",
-  "description": "Bilingual voice translator: single-ASR auto-switch, early-commit, race translation, LRU cache.",
-  "version": "0.9.4",
+  "description": "Bilingual voice translator: single-ASR auto-switch, onspeechend TTS, phrasebook, speculative translate.",
+  "version": "0.9.5",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
