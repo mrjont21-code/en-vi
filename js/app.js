@@ -11,7 +11,7 @@
     asr = require('./asr.js'); translation = require('./translation.js'); tts = require('./tts.js'); ui = require('./ui.js');
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MS = 350, FAST_CONF = 0.8, LOCK_MS = 600;
-  var VERSION = 'v0.9.1', BUILD = '20260912-0745';
+  var VERSION = 'v0.9.2', BUILD = '20260912-0920';
 
   // ---------- row helpers ----------
   function ensureActiveRow() {
@@ -47,6 +47,10 @@
     if (idioms && idioms.detectVi) {
       if (state.activeRow.vi.final) state.activeRow.vi.idiom = idioms.detectVi(state.activeRow.vi.final).join('; ');
       else state.activeRow.vi.idiom = '';
+    }
+    if (idioms && idioms.detectEn) {
+      if (state.activeRow.en.final) state.activeRow.en.idiom = idioms.detectEn(state.activeRow.en.final).join('; ');
+      else state.activeRow.en.idiom = '';
     }
     translation.scheduleTranslateActive(400, onTranslatedDisplay); // incremental UI display only
   }

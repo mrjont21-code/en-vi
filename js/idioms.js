@@ -56,17 +56,71 @@
       "gan ruột": "lòng dũng cảm, không sợ hãi",
       "nóng lòng": "vội vàng muốn làm gì, không kiềm được",
       "nóng giận": "dễ nổi giận, tính khí nóng"
+    },
+    en: {
+      "break a leg": "chúc may mắn",
+      "piece of cake": "rất dễ dàng",
+      "hit the books": "học bài chăm chỉ",
+      "hit the hay": "đi ngủ",
+      "hit the sack": "đi ngủ",
+      "under the weather": "không khỏe, bị ốm",
+      "cost an arm and a leg": "rất đắt đỏ",
+      "once in a blue moon": "rất hiếm khi",
+      "spill the beans": "tiết lộ bí mật",
+      "bite the bullet": "chịu đựng điều khó khăn",
+      "break the ice": "phá vỡ sự ngượng ngùng",
+      "let the cat out of the bag": "để lộ bí mật",
+      "hit the nail on the head": "nói đúng trọng tâm",
+      "when pigs fly": "không bao giờ xảy ra",
+      "burn the midnight oil": "thức khuya làm việc",
+      "call it a day": "kết thúc ngày làm việc, nghỉ ngơi",
+      "cut corners": "làm tắt, thiếu cẩn thận",
+      "get out of hand": "mất kiểm soát",
+      "go the extra mile": "cố gắng hơn mức bình thường",
+      "hang in there": "kiên trì, cố lên",
+      "it's not rocket science": "không khó hiểu",
+      "kill two birds with one stone": "một mũi tên trúng hai đích",
+      "let someone off the hook": "tha thứ, không bắt lỗi",
+      "on the ball": "nhanh nhẹn, hiểu biết",
+      "pull someone's leg": "trêu chọc ai đó",
+      "speak of the devil": "nói tới người này người kia tới",
+      "the best of both worlds": "được lợi cả hai phía",
+      "time flies": "thời gian trôi nhanh",
+      "your guess is as good as mine": "tôi cũng không biết",
+      "a dime a dozen": "phổ biến, dễ tìm",
+      "back to square one": "quay lại điểm xuất phát",
+      "barking up the wrong tree": "nhầm mục tiêu",
+      "beat around the bush": "nói vòng vo, không thẳng thắn",
+      "blessing in disguise": "điều xui mà lại thành may",
+      "burn bridges": "đốt cầu thuyền, không còn lối lui",
+      "cry over spilt milk": "hối hận điều đã qua",
+      "don't judge a book by its cover": "đừng đánh giá qua bề ngoài",
+      "every cloud has a silver lining": "điều xui cũng có mặt tốt",
+      "give someone the cold shoulder": "lạnh lùng, phớt lờ",
+      "go back to the drawing board": "lên kế hoạch lại từ đầu",
+      "in the heat of the moment": "trong lúc nóng giận",
+      "it takes two to tango": "một mình không làm nên chuyện",
+      "keep your chin up": "giữ tinh thần lạc quan",
+      "no pain, no gain": "không có công thì không có thành quả",
+      "on cloud nine": "cực kỳ hạnh phúc",
+      "play it by ear": "ứng biến tùy tình huống",
+      "sit on the fence": "không đứng về phe nào",
+      "take it with a grain of salt": "không nên tin hoàn toàn",
+      "through thick and thin": "qua mọi thăng trầm",
+      "turn a blind eye": "làm ngơ trước điều sai trái"
     }
   };
   // Detect all idioms present in text; returns array of meanings.
-  idioms.detectVi = function (text) {
+  function detect(dict, text) {
     if (!text) return [];
     var low = text.toLowerCase(), found = [], key;
-    for (key in idioms.vi) { if (Object.prototype.hasOwnProperty.call(idioms.vi, key)) {
-      if (low.indexOf(key) >= 0) found.push(idioms.vi[key]);
+    for (key in dict) { if (Object.prototype.hasOwnProperty.call(dict, key)) {
+      if (low.indexOf(key) >= 0) found.push(dict[key]);
     } }
     return found;
-  };
+  }
+  idioms.detectVi = function (text) { return detect(idioms.vi, text); };
+  idioms.detectEn = function (text) { return detect(idioms.en, text); };
   root.WD = root.WD || {};
   root.WD.idioms = idioms;
   if (typeof module !== 'undefined' && module.exports) module.exports = idioms;
