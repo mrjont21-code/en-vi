@@ -1,7 +1,8 @@
 {
-  "name": "WebDich v0.1 — Voice to Text",
+  "name": "WebDich v0.9.4 — Voice → Text + Translate + TTS",
   "short_name": "WebDich",
-  "description": "Minimal voice → text prototype. Phase 1: live transcription with auto EN/VI detection.",
+  "description": "Bilingual voice translator: single-ASR auto-switch, early-commit, race translation, LRU cache.",
+  "version": "0.9.4",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
