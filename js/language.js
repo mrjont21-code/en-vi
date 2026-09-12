@@ -1,13 +1,35 @@
-/* WebDich v0.9.3 — language.js: pure language detection & dual-ASR scoring.
- * No LLM, no API, no TTS. Input text → output {lang, confidence}.
- * Fixes v0.9.3:
- *  - VI_DIACRITIC_RE now case-insensitive: "TÔI MUỐN", "ĐẸP" correctly detected as VI
+/* WebDich v0.9.5 — language.js: pure language detection & dual-ASR scoring.
+ * v0.9.5 additions:
+ *  - VI_UNSIGNED lexicon: common Vietnamese words WITHOUT diacritics map to VI strong.
+ *    en-US ASR almost never produces diacritics; this lets unsigned VI text be
+ *    correctly classified so adaptAsrLanguage can actually switch to vi-VN.
  */
 (function (root) {
   'use strict';
-  // v0.9.3: case-insensitive — uppercase diacritics (ÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ)
   var VI_DIACRITIC_RE = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]/;
   var NON_ASCII_RE = /[^\x00-\x7F]/;
+
+  // v0.9.5: common Vietnamese words WITHOUT diacritics — en-US ASR produces these
+  var VI_UNSIGNED = {
+    'toi':true,'muon':true,'khong':true,'chao':true,'den':true,'lam':true,'duoc':true,
+    'nguoi':true,'trong':true,'tren':true,'duoi':true,'sau':true,'truoc':true,'rat':true,
+    'it':true,'kia':true,'nay':true,'hay':true,'neu':true,'khi':true,'da':true,'cung':true,
+    'deu':true,'lai':true,'van':true,'chi':true,'thi':true,'ga':true,'tau':true,'xe':true,
+    'nha':true,'bien':true,'pho':true,'an':true,'uong':true,'nuoc':true,'camon':true,
+    'loi':true,'cho':true,'hoi':true,'dau':true,'ra':true,'vao':true,'len':true,'xuong':true,
+    'qua':true,'tiep':true,'theo':true,'noi':true,'duong':true,'phai':true,'trai':true,
+    'thang':true,'cuoi':true,'gio':true,'phut':true,'ngay':true,'tuan':true,'nam':true,
+    'sang':true,'trua':true,'chieu':true,'mai':true,'nua':true,'ve':true,'xem':true,
+    'biet':true,'nghe':true,'noi':true,'doi':true,'gap':true,'lay':true,'dua':true,
+    'tra':true,'mua':true,'ban':true,'gia':true,'bao':true,'nhieu':true,'dong':true,
+    'tien':true,'the':true,'may':true,'bay':true,'san':true,'khach':true,'hang':true,
+    'quan':true,'phong':true,'tam':true,'ngu':true,'benh':true,'vien':true,'thuoc':true,
+    'cuu':true,'hoa':true,'tram':true,'ai':true,'ay':true,'han':true,'co':true,'di':true,
+    'chu':true,'bac':true,'ong':true,'ba':true,'con':true,'chau':true,'be':true,'nhau':true,
+    'tam':true,'biet':true,'hen':true,'ten':true,'goi':true,'xa':true,'gan':true,'nao':true,
+    'luc':true,'thanh':true,'cong':true,'minh':true,'em':true,'anh':true
+  };
+
   var VI_STOP = ['tôi','bạn','xin','chào','là','có','không','đi','đến','một','người','đây','đó',
     'gì','nào','mình','anh','chị','em','được','rồi','đang','sẽ','vì','nhưng','mà','và','với','từ',
     'trong','trên','dưới','giữa','sau','trước','ngay','rất','nhiều','ít','kia','này','hay','hoặc',
@@ -19,6 +41,7 @@
     'máy','bay','sân','khách','sạn','nhà','hàng','quán','phòng','tắm','ngủ','y','tế','bệnh','viện',
     'thuốc','cứu','hỏa','trạm','ai','ấy','hắn','cô','dì','chú','bác','ông','bà','con','cháu','bè',
     'nhau','tạm','biệt','hẹn','lại','tên','gọi','xa','gần','thế','nào','ạ','ơi','ồ','à','lúc'];
+
   var EN_STOP = ['the','is','are','was','were','i','you','he','she','it','we','they','to','of','in',
     'for','on','with','at','by','from','up','about','into','over','after','be','have','has','had',
     'do','does','did','this','that','these','those','and','but','or','not','no','yes','hello','want',
@@ -49,12 +72,22 @@
     return n;
   }
 
+  // v0.9.5: count unsigned VI words (for scoring)
+  function countUnsignedVi(text) {
+    var words = (text || '').toLowerCase().split(/\s+/), n = 0;
+    for (var i = 0; i < words.length; i++) {
+      if (VI_UNSIGNED[stripPunct(words[i])]) n++;
+    }
+    return n;
+  }
+
   function stripPunct(w) { return w.replace(/[.,!?;:()"'\[\]{}<>]/g, ''); }
 
   function classifyWord(w) {
     var low = stripPunct((w || '').toLowerCase());
     if (!low) return null;
     if (VI_DIACRITIC_RE.test(w)) return 'vi';
+    if (VI_UNSIGNED[low]) return 'vi'; // v0.9.5
     if (VI_STOP.indexOf(low) >= 0) return 'vi';
     if (EN_STOP.indexOf(low) >= 0) return 'en';
     if (NON_ASCII_RE.test(w)) return 'vi';
@@ -80,7 +113,12 @@
     var s = (c.conf || 0) * 2.0;
     var sw = (lang === 'vi') ? countInList(c.text, VI_STOP) : countInList(c.text, EN_STOP);
     s += (sw / words) * 0.9;
-    if (lang === 'vi' && hasDiacritics(c.text)) s += 0.6;
+    if (lang === 'vi') {
+      if (hasDiacritics(c.text)) s += 0.6;
+      // v0.9.5: bonus for unsigned VI words (en-US ASR output)
+      var uvw = countUnsignedVi(c.text);
+      if (uvw > 0) s += (uvw / words) * 0.5;
+    }
     if (lang === 'en' && hasDiacritics(c.text)) s -= 0.3;
     if (lang === 'en' && !hasDiacritics(c.text)) s += 0.05;
     s += Math.min(words, 12) * 0.01;
@@ -94,7 +132,6 @@
     return { lang: 'en', text: en ? en.text : '' };
   }
 
-  // Standalone detection: input text → {lang, confidence}. confidence 0..1.
   function detectLanguage(text) {
     if (!text || !text.trim()) return { lang: 'unknown', confidence: 0 };
     var words = text.trim().split(' ').filter(Boolean);
@@ -110,18 +147,17 @@
     return { lang: 'unknown', confidence: 0 };
   }
 
-  // v0.8.1.1: three-state classifier. Weak tokens = unknown, NOT forced to en.
   function classifyWord3(w) {
     var low = stripPunct((w || '').toLowerCase());
     if (!low) return { lang: 'unknown', strong: false };
     if (VI_DIACRITIC_RE.test(w)) return { lang: 'vi', strong: true };
+    if (VI_UNSIGNED[low]) return { lang: 'vi', strong: true }; // v0.9.5: unsigned VI lexicon
     if (VI_STOP.indexOf(low) >= 0) return { lang: 'vi', strong: true };
     if (EN_STOP.indexOf(low) >= 0) return { lang: 'en', strong: true };
     if (NON_ASCII_RE.test(w)) return { lang: 'vi', strong: false };
     return { lang: 'unknown', strong: false };
   }
 
-  // v0.8.1.1: dual-language segmentation with context smoothing.
   function segmentDual(text) {
     var words = (text || '').trim().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
@@ -148,7 +184,13 @@
     return segs;
   }
 
-  var mod = { classifyWord: classifyWord, classifyWord3: classifyWord3, splitByLanguage: splitByLanguage, segmentDual: segmentDual, candidateScore: candidateScore, pickWinner: pickWinner, detectLanguage: detectLanguage, hasDiacritics: hasDiacritics, countInList: countInList };
+  var mod = {
+    classifyWord: classifyWord, classifyWord3: classifyWord3,
+    splitByLanguage: splitByLanguage, segmentDual: segmentDual,
+    candidateScore: candidateScore, pickWinner: pickWinner,
+    detectLanguage: detectLanguage, hasDiacritics: hasDiacritics,
+    countInList: countInList, countUnsignedVi: countUnsignedVi
+  };
   root.WD = root.WD || {};
   root.WD.language = mod;
   if (typeof module !== 'undefined' && module.exports) module.exports = mod;

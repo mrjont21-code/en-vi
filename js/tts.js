@@ -38,13 +38,15 @@
     var key = lang + '|' + text;
     if (state._lastSpokenTranslation === key) return false; // duplicate guard
     state._lastSpokenTranslation = key;
+    // v0.9.5: set ttsSpeaking IMMEDIATELY, don't wait for onstart (100–300ms gap = echo leak)
+    setTtsSpeaking();
     var u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
     var v = pickVoice(lang);
     if (v) u.voice = v;
     u.rate = (lang.slice(0, 2) === 'vi') ? state.ttsRate.vi : state.ttsRate.en;
     u.pitch = 1.0;
-    u.onstart = function () { setTtsSpeaking(); };
+    u.onstart = function () { /* already set */ };
     u.onend = function () { setTimeout(clearTtsSpeaking, 250); };
     u.onerror = function () { clearTtsSpeaking(); };
     root.speechSynthesis.speak(u);

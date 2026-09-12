@@ -103,16 +103,54 @@
     "i've": "i have", "you've": "you have", "we've": "we have", "they've": "they have"
   };
 
+  // v0.9.5: ASR contractions — Chrome almost never outputs apostrophes
+  var ASR_CONTRACTIONS = {
+    "dont": "do not", "doesnt": "does not", "didnt": "did not",
+    "isnt": "is not", "arent": "are not", "wasnt": "was not", "werent": "were not",
+    "hasnt": "has not", "havent": "have not", "hadnt": "had not",
+    "wont": "will not", "wouldnt": "would not",
+    "cant": "cannot", "couldnt": "could not", "shouldnt": "should not",
+    "im": "i am", "youre": "you are", "were": "were", // "were" stays as past tense, NOT "we are"
+    "theyre": "they are", "its": "its" // "its" (possessive) stays, bigram "its not" handled separately
+  };
+
+  // v0.9.5: wildcard possessive → bare wildcard (before punctuation strip)
+  var WILDCARD_POSSESSIVE = {
+    "someone's": "someone", "somebody's": "somebody", "something's": "something",
+    "anyone's": "anyone", "anybody's": "anybody", "anything's": "anything"
+  };
+
   function normalizeForMatch(text) {
     if (!text) return '';
     var t = text.toLowerCase();
-    // Expand contractions (only those with apostrophe — genuine contractions)
+
+    // Step 1: wildcard possessive (before punctuation strip so we see the apostrophe)
+    t = t.replace(/(someone|somebody|something|anyone|anybody|anything)'s/g, function (m) {
+      return WILDCARD_POSSESSIVE[m] || m;
+    });
+
+    // Step 2: genuine contractions WITH apostrophe
     t = t.replace(/[a-z]+'[a-z]*/g, function (m) {
       return CONTRACTIONS[m] || m.replace(/'/g, '');
     });
-    // Strip punctuation (but keep word characters and spaces)
+
+    // Step 3: strip punctuation
     t = t.replace(/[.,!?;:()"'\[\]{}<>]/g, '');
-    // Collapse whitespace
+
+    // Step 4: bigram "its not" → "it is not" (ASR reality; "its" alone stays possessive)
+    t = t.replace(/\bits not\b/g, 'it is not');
+
+    // Step 5: ASR contractions (no apostrophe) — whole words only
+    t = t.replace(/\b([a-z]+)\b/g, function (m) {
+      return ASR_CONTRACTIONS[m] || m;
+    });
+
+    // Step 6: wildcard plural forms (ASR quirk: "someones" for "someone's" without apostrophe)
+    t = t.replace(/\b(someones|anyones|somebodies|anybodies|somethings|anythings)\b/g, function (m) {
+      return m.replace(/(s|es)$/, '');
+    });
+
+    // Step 7: collapse whitespace
     t = t.replace(/\s+/g, ' ').trim();
     return t;
   }

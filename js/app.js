@@ -1,16 +1,16 @@
-/* WebDich v0.9.4 — app.js: controller only. No business logic.
+/* WebDich v0.9.5 — app.js: controller only. No business logic.
  * Flow: MIC → ASR → TEXT → LANGUAGE → STATE → UI → TRANSLATION → TTS.
- * Owns: chunk timer, auto-finalize, auto-restart coordination, channel toggles.
  *
- * v0.9.4 major changes:
- *  - Bug A fix: onTranslatedDisplay checks the CELL'S OWN row.finalized, not state.activeRow
- *  - Early-commit: 0ms when VI has diacritics OR score ≥ strong threshold; max dual-wait 180ms
- *  - Removed lockUntil / FAST_CONF blind-drop; late channel can still revise once
- *  - Single-ASR default: one SpeechRecognition with auto language switching
- *    (Chrome cannot reliably run two instances simultaneously). Dual mode only
- *    when explicitly requested via state.dualMode = true.
- *  - Speculative translate: debounce reduced 400→120ms; interim translates start earlier
- *  - TTS triggered on pause-detection (onend + 400ms silence) not just 2s chunk
+ * v0.9.5 changes:
+ *  - Bug A fix already in place (cell._row check).
+ *  - onend identity: only nulls state.recSingle if it matches THIS recognizer instance.
+ *  - adaptAsrLanguage: sets asrLang + persists; stops old recognizer; its onend
+ *    triggers restart with new language (no double-start).
+ *  - onspeechend (not onend) triggers pause-finalize for TTS. onend only restarts
+ *    the engine. This matches actual user pauses, not engine restarts.
+ *  - Speculative translate: interim stable ≥ 3 words, unchanged 150ms → start
+ *    translating WHILE user is still speaking. Final often hits cache.
+ *  - asrLang persists to localStorage on every successful adaptation.
  */
 (function (root) {
   'use strict';
@@ -20,16 +20,14 @@
     state = require('./state.js'); text = require('./text.js'); language = require('./language.js');
     asr = require('./asr.js'); translation = require('./translation.js'); tts = require('./tts.js'); ui = require('./ui.js');
   }
-  var CHUNK_MS = 2000, DUAL_WAIT_MAX_MS = 180, STRONG_SCORE = 1.4, PAUSE_MS = 400;
-  var VERSION = 'v0.9.4', BUILD = '20260912-2130';
+  var CHUNK_MS = 2000, DUAL_WAIT_MAX_MS = 180, STRONG_SCORE = 1.4, PAUSE_MS = 280, SPECULATIVE_STABLE_MS = 150, SPECULATIVE_MIN_WORDS = 3;
+  var VERSION = 'v0.9.5', BUILD = '20260912-2215';
 
-  // Track which row each cell belongs to (for Bug A fix)
   function attachRowRefs(row) {
     row.en._row = row;
     row.vi._row = row;
   }
 
-  // ---------- row helpers ----------
   function ensureActiveRow() {
     if (!state.activeRow || state.activeRow.finalized) {
       state.activeRow = state.newRow();
@@ -68,7 +66,6 @@
       if (state.activeRow.en.final) state.activeRow.en.idiom = idioms.detectEn(state.activeRow.en.final).join('; ');
       else state.activeRow.en.idiom = '';
     }
-    // v0.9.4: speculative translate — 120ms debounce (was 400ms)
     translation.scheduleTranslateActive(120, onTranslatedDisplay);
   }
   function dominantChannel() {
@@ -80,10 +77,8 @@
     return 'en';
   }
 
-  // v0.9.4 Bug A fix: check the CELL'S OWN row.finalized, not state.activeRow
   function onTranslatedDisplay(cell, toLang) {
     ui.renderRows();
-    // Skip TTS only for INCREMENTAL translates of the cell's own non-finalized row
     if (cell && cell._row && !cell._row.finalized) return;
     if (cell && cell.trans && !cell._spoken) {
       cell._spoken = true;
@@ -91,29 +86,31 @@
     }
   }
 
-  // ---------- finalize row → translation + TTS via callback ----------
   function finalizeRow(row) {
     if (!row) return;
     row.finalized = true;
-    // If translation already exists, trigger TTS immediately
     if (row.en.trans && !row.en._spoken) onTranslatedDisplay(row.en, 'vi');
     if (row.vi.trans && !row.vi._spoken) onTranslatedDisplay(row.vi, 'en');
     translation.translateRow(row, onTranslatedDisplay);
     ui.renderRows();
   }
 
-  // ---------- v0.9.4 early-commit decision ----------
   function shouldEarlyCommit(lang, cand) {
     if (!cand || !cand.text) return false;
-    // Strong VI signal: diacritics = commit immediately (0ms)
     if (lang === 'vi' && language.hasDiacritics(cand.text)) return true;
-    // Strong score: stopwords + confidence add up
     var s = language.candidateScore(cand, lang);
     if (s >= STRONG_SCORE) return true;
+    // v0.9.5: EN with high stopword ratio (≥0.7) and ≥3 words → early commit
+    if (lang === 'en') {
+      var words = cand.text.split(/\s+/).filter(Boolean);
+      if (words.length >= 3) {
+        var sw = language.countInList(cand.text, ['the','is','are','was','were','i','you','to','of','in','for','on','with','at','by','from','this','that','and','but','or','not','hello','want','go','how','what','where','when','please','thank','good']);
+        if (sw / words.length >= 0.7) return true;
+      }
+    }
     return false;
   }
 
-  // ---------- dual-ASR commit ----------
   function scheduleCommit() {
     clearTimeout(state.commitTimer);
     state.commitTimer = setTimeout(flushPending, DUAL_WAIT_MAX_MS);
@@ -131,34 +128,32 @@
     if (seg) {
       state.committedTail = text.appendCommitted(seg, state.committedTail);
       handleIncrement(seg);
-      // Adapt ASR language in single-ASR mode
       if (!state.dualMode) adaptAsrLanguage(winner.lang);
     }
   }
 
-  // ---------- v0.9.4: single-ASR language adaptation ----------
+  // v0.9.5: adapt ASR language — persist, then stop old; onend triggers restart
   function adaptAsrLanguage(detectedLang) {
     if (!state.micOn || state.dualMode) return;
     var target = detectedLang === 'vi' ? 'vi-VN' : 'en-US';
     if (state.asrLang === target) return;
-    // Only switch after 2 consecutive same-language wins (avoid flicker)
     state._langStreak = state._langStreak || { lang: target, count: 0 };
     if (state._langStreak.lang === target) {
       state._langStreak.count++;
     } else {
       state._langStreak = { lang: target, count: 1 };
+      return;
     }
     if (state._langStreak.count >= 2) {
-      state.asrLang = target;
       state._langStreak.count = 0;
-      // Restart recognizer with new language
-      asr.stopAll();
-      state.recSingle = null;
-      startSingleRecognizer();
+      state.asrLang = target;
+      if (state._persistAsrLang) state._persistAsrLang(target);
+      if (state.recSingle) {
+        try { state.recSingle.stop(); } catch (e) {}
+      }
     }
   }
 
-  // ---------- ASR result wiring ----------
   function onDualResult(lang, e) {
     if (state.ttsSpeaking) return;
     var r = asr.extractResult(e);
@@ -168,10 +163,7 @@
     if (!r.final) return;
     var cand = { text: text.normalizeText(r.final), conf: r.conf, ts: Date.now() };
     state.pending[lang] = cand;
-
-    // v0.9.4: early-commit on strong signal (0ms, no wait)
     if (shouldEarlyCommit(lang, cand)) {
-      // If other channel has pending too, still run pickWinner for fairness
       if (state.pending.en && state.pending.vi) { flushPending(); return; }
       commitWinner({ lang: lang, text: cand.text });
       state.pending[lang] = null;
@@ -182,21 +174,48 @@
     scheduleCommit();
   }
 
-  // v0.9.4: single-ASR result handler — detect language, route directly
+  // v0.9.5: single-ASR result handler + speculative interim translate
   function onSingleResult(e) {
     if (state.ttsSpeaking) return;
     var r = asr.extractResult(e);
-    if (r.interim) { ui.updateLiveText(r.interim); }
+    if (r.interim) {
+      ui.updateLiveText(r.interim);
+      scheduleSpeculative(r.interim);
+    }
     if (!r.final) return;
+    clearTimeout(state.speculativeTimer);
+    state.lastStableInterim = '';
     var normalized = text.normalizeText(r.final);
     if (!normalized) return;
     var detected = language.detectLanguage(normalized);
     var commitLang = detected.lang;
     if (commitLang === 'unknown') commitLang = (state.asrLang === 'vi-VN') ? 'vi' : 'en';
-    // Respect channel toggles
     if (commitLang === 'vi' && !state.channel.vi) commitLang = 'en';
     if (commitLang === 'en' && !state.channel.en) commitLang = 'vi';
     commitWinner({ lang: commitLang, text: normalized });
+  }
+
+  function scheduleSpeculative(interim) {
+    var words = interim.trim().split(/\s+/).filter(Boolean);
+    if (words.length < SPECULATIVE_MIN_WORDS) return;
+    if (interim === state.lastStableInterim) return;
+    clearTimeout(state.speculativeTimer);
+    state.lastStableInterim = interim;
+    state.speculativeTimer = setTimeout(function () {
+      if (!state.activeRow || state.activeRow.finalized) return;
+      var detected = language.detectLanguage(interim);
+      var fromLang = detected.lang === 'vi' ? 'vi' : 'en';
+      var toLang = fromLang === 'vi' ? 'en' : 'vi';
+      translation.translate(interim, fromLang, toLang, function (t) {
+        if (t && state.activeRow && !state.activeRow.finalized) {
+          var cell = fromLang === 'vi' ? state.activeRow.vi : state.activeRow.en;
+          if (cell && cell.final === interim && !cell.trans) {
+            cell.trans = t;
+            ui.renderRows();
+          }
+        }
+      });
+    }, SPECULATIVE_STABLE_MS);
   }
 
   function shouldShowLive(lang, interim) {
@@ -207,7 +226,6 @@
     return score >= otherScore;
   }
 
-  // ---------- ASR handlers ----------
   function enHandlers() {
     return {
       onresult: function (e) { onDualResult('en', e); },
@@ -222,26 +240,37 @@
       onerror: function (e) { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { state.viFailed = true; } }
     };
   }
+
+  // v0.9.5: single-ASR handlers with onspeechend + onend identity check
   function singleHandlers() {
-    return {
-      onresult: onSingleResult,
-      onend: function () {
-        state.recSingle = null;
-        // v0.9.4: onend = pause/silence detected → finalize active row for TTS
+    var handlers = {};
+    var thisRecognizer = null;
+    handlers.onresult = onSingleResult;
+    handlers.onspeechend = function () {
+      clearTimeout(state._pauseTimer);
+      state._pauseTimer = setTimeout(function () {
         if (state.activeRow && !state.activeRow.finalized && (state.activeRow.en.final || state.activeRow.vi.final)) {
-          clearTimeout(state._pauseTimer);
-          state._pauseTimer = setTimeout(function () {
-            if (state.activeRow && !state.activeRow.finalized) finalizeRow(state.activeRow);
-          }, PAUSE_MS);
+          finalizeRow(state.activeRow);
         }
-        if (state.micOn && !state.userStopped) scheduleRestart();
-      },
-      onerror: function (e) {
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-          state.userStopped = true; stopMicrophone(); ui.showStatus('Microphone access denied.');
-        }
+      }, PAUSE_MS);
+    };
+    handlers.onspeechstart = function () {
+      clearTimeout(state._pauseTimer);
+    };
+    handlers.onend = function () {
+      // v0.9.5: identity check — only null if this is still the active recognizer
+      if (state.recSingle === thisRecognizer) {
+        state.recSingle = null;
+      }
+      if (state.micOn && !state.userStopped) scheduleRestart();
+    };
+    handlers.onerror = function (e) {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        state.userStopped = true; stopMicrophone(); ui.showStatus('Microphone access denied.');
       }
     };
+    handlers._setRecognizer = function (r) { thisRecognizer = r; };
+    return handlers;
   }
 
   function scheduleRestart() {
@@ -263,11 +292,15 @@
     if (!asr.supported || state.recSingle) return;
     state.lastStartTs = Date.now();
     try {
-      state.recSingle = asr.startSingle(state.asrLang || 'en-US', singleHandlers());
+      var h = singleHandlers();
+      var r = asr.startSingle(state.asrLang || 'en-US', h);
+      if (r) {
+        state.recSingle = r;
+        h._setRecognizer(r);
+      }
     } catch (e) { state.recSingle = null; }
   }
 
-  // ---------- chunk timer ----------
   function startChunkTimer() {
     stopChunkTimer();
     state.chunkTimer = setInterval(function () {
@@ -277,19 +310,18 @@
   }
   function stopChunkTimer() { if (state.chunkTimer) { clearInterval(state.chunkTimer); state.chunkTimer = null; } }
 
-  // ---------- mic control ----------
   function startMicrophone() {
     state.micOn = true; state.userStopped = false; state.viFailed = false;
     state.committedTail = ''; state.pending = { en: null, vi: null };
     state.rows = []; state.activeRow = null; state.needRestart = { en: false, vi: false }; state.lastStartTs = 0;
     state._lastSpokenTranslation = ''; state._langStreak = null;
     state.asrLang = state.asrLang || 'en-US';
-    state.ttsSpeaking = false;
+    state.ttsSpeaking = false; state.lastStableInterim = '';
     if (state._ttsUnstickTimer) { clearTimeout(state._ttsUnstickTimer); state._ttsUnstickTimer = null; }
     if (state._pauseTimer) { clearTimeout(state._pauseTimer); state._pauseTimer = null; }
+    if (state.speculativeTimer) { clearTimeout(state.speculativeTimer); state.speculativeTimer = null; }
     ui.renderRows(); ui.updateMicUI();
     startChunkTimer();
-    // v0.9.4: warm translation connection
     if (translation.warmConnection) translation.warmConnection();
     if (state.dualMode) {
       if (state.channel.en) asr.startEN(enHandlers());
@@ -302,7 +334,7 @@
     state.userStopped = true; state.micOn = false;
     stopChunkTimer();
     clearTimeout(state.transDebounce); clearTimeout(state.restartTimer); clearTimeout(state.commitTimer);
-    clearTimeout(state._pauseTimer);
+    clearTimeout(state._pauseTimer); clearTimeout(state.speculativeTimer);
     state.needRestart = { en: false, vi: false };
     if (state.activeRow && (state.activeRow.en.final || state.activeRow.vi.final)) finalizeRow(state.activeRow);
     asr.stopAll();
@@ -312,7 +344,6 @@
     ui.updateMicUI(); ui.clearLive(); ui.renderRows();
   }
 
-  // ---------- channel toggles ----------
   function toggleChannel(lang) {
     var next = !state.channel[lang];
     if (!next && (lang === 'en' ? !state.channel.vi : !state.channel.en)) return;
@@ -328,7 +359,6 @@
     }
   }
 
-  // ---------- init ----------
   function init() {
     if (!ui.el.live) ui.init();
     ui.updateChannelUI();
@@ -345,11 +375,10 @@
   }
   if (root.document) root.document.addEventListener ? root.document.addEventListener('DOMContentLoaded', init) : init();
 
-  // ---------- test hook (Node) ----------
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       VERSION: VERSION,
-      reset: function () { state.reset(); state._langStreak = null; state.asrLang = 'en-US'; state.recSingle = null; },
+      reset: function () { state.reset(); },
       getRows: function () { return state.rows.map(function (r) { return { en: r.en.final, vi: r.vi.final }; }); },
       onDualResult: onDualResult,
       onSingleResult: onSingleResult,
@@ -363,7 +392,8 @@
       shouldEarlyCommit: shouldEarlyCommit,
       _state: state,
       _attachRowRefs: attachRowRefs,
-      _onTranslatedDisplay: onTranslatedDisplay
+      _onTranslatedDisplay: onTranslatedDisplay,
+      _adaptAsrLanguage: adaptAsrLanguage
     };
   }
 })(typeof window !== 'undefined' ? window : global);

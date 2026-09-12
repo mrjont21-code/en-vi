@@ -36,6 +36,10 @@
     r.onresult = handlers.onresult;
     r.onend = handlers.onend;
     r.onerror = handlers.onerror;
+    // v0.9.5: optional non-standard handlers for single-ASR pause detection
+    if (handlers.onspeechend) r.onspeechend = handlers.onspeechend;
+    if (handlers.onspeechstart) r.onspeechstart = handlers.onspeechstart;
+    if (handlers.onaudioend) r.onaudioend = handlers.onaudioend;
     try { r.start(); } catch (e) {}
     return r;
   }
