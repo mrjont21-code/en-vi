@@ -36,7 +36,7 @@
     rows: [],
     activeRow: null,
     channel: { en: true, vi: true },
-    dualMode: false,
+    dualMode: true,  // v0.9.6: dual-ASR default (most accurate language routing)
     asrLang: defaultAsrLang(),
     ttsRate: { en: 1.1, vi: 1.1 },
     ttsSpeaking: false,
@@ -65,7 +65,7 @@
   S.reset = function () {
     S.micOn = false; S.userStopped = false; S.recEN = null; S.recVI = null; S.recSingle = null;
     S.viFailed = false; S.pending = { en: null, vi: null }; S.rows = []; S.activeRow = null;
-    S.channel = { en: true, vi: true }; S.dualMode = false;
+    S.channel = { en: true, vi: true }; S.dualMode = true;
     S.asrLang = defaultAsrLang();
     S.ttsRate = { en: 1.1, vi: 1.1 }; S.ttsSpeaking = false;
     S.restartTimer = null; S.commitTimer = null; S.chunkTimer = null;

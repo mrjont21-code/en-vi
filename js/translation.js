@@ -151,6 +151,9 @@
 
   function fetchGoogle(textStr, from, to) {
     var sl = effectiveSourceLang(textStr, from);
+    // v0.9.6: if source lang ends up same as target, use explicit 'from' (avoids identity)
+    if (sl === to) sl = from;
+    if (sl === to) sl = 'auto'; // last resort
     var gtx = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sl + '&tl=' + to + '&dt=t&q=' + encodeURIComponent(textStr);
     var p = fetchWithTimeout(gtx, GOOGLE_TIMEOUT_MS);
     return p.then(function (r) { return r.json(); }).then(function (j) {
@@ -169,16 +172,29 @@
   function fetchMyMemory(textStr, from, to) {
     var fromLang = from;
     try { if (LANG && LANG.detectLanguage) { var d = LANG.detectLanguage(textStr); if (d.lang === 'vi' || d.lang === 'en') fromLang = d.lang; } } catch (e) {}
+    // v0.9.6: CRITICAL FIX — MyMemory returns "PLEASE SELECT TWO DISTINCT LANGUAGES" if from===to
+    if (fromLang === to) fromLang = from; // fall back to explicit source lang
+    if (fromLang === to) { throw { code: 'same-lang', _controller: null }; } // still same? give up
     var mm = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(textStr) + '&langpair=' + fromLang + '|' + to;
     var p = fetchWithTimeout(mm, MM_TIMEOUT_MS);
     return p.then(function (r) { return r.json(); }).then(function (j) {
       var t = (j && j.responseData && j.responseData.translatedText) || '';
       if (!t) throw { code: 'empty', _controller: p._controller };
-      if (t.indexOf('MYMEMORY WARNING') >= 0 || t.indexOf('QUERY LENGTH') >= 0) throw { code: 'warning', _controller: p._controller };
+      // v0.9.6: filter ALL known MyMemory error strings
+      var tUpper = t.toUpperCase();
+      if (tUpper.indexOf('MYMEMORY WARNING') >= 0 ||
+          tUpper.indexOf('PLEASE SELECT TWO DISTINCT LANGUAGES') >= 0 ||
+          tUpper.indexOf('QUERY LENGTH LIMIT EXCEEDED') >= 0 ||
+          tUpper.indexOf('DAILY QUOTA EXCEEDED') >= 0 ||
+          tUpper.indexOf('INVALID LANGUAGE PAIR') >= 0 ||
+          tUpper.indexOf('LANGUAGE PAIR NOT SUPPORTED') >= 0 ||
+          tUpper.indexOf('NO TRANSLATION FOUND') >= 0) {
+        throw { code: 'mm-error', _controller: p._controller, mmError: t };
+      }
       if (isNoOp(textStr, t)) throw { code: 'identity', _controller: p._controller };
       return { t: t, provider: 'mm', _controller: p._controller };
     }).catch(function (e) {
-      if (e && e._controller) throw e;
+      if (e && e._controller !== undefined) throw e;
       throw { code: e && e.message || 'network', _controller: p._controller };
     });
   }

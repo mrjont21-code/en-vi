@@ -20,7 +20,7 @@
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MAX_MS = 180, STRONG_SCORE = 1.4, PAUSE_MS = 280;
   var SPECULATIVE_STABLE_MS = 150, SPECULATIVE_MIN_WORDS = 3, SPEECH_END_FALLBACK_MS = 1500;
-  var VERSION = 'v0.9.5a', BUILD = '20260912-2315';
+  var VERSION = 'v0.9.6', BUILD = '20260912-2315';
   var _asrFallbackTried = false;
 
   function log() {
