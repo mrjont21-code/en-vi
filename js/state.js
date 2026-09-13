@@ -34,6 +34,8 @@
     viFailed: false,
     pending: { en: null, vi: null },
     rows: [],
+    segments: [],        // v0.9.8: all segments in time order for TTS queue
+    _segmentCounter: 0,  // v0.9.8: global order counter
     activeRow: null,
     channel: { en: true, vi: true },
     dualMode: true,  // v0.9.6: dual-ASR default (most accurate language routing)
@@ -65,6 +67,7 @@
   S.reset = function () {
     S.micOn = false; S.userStopped = false; S.recEN = null; S.recVI = null; S.recSingle = null;
     S.viFailed = false; S.pending = { en: null, vi: null }; S.rows = []; S.activeRow = null;
+    S.segments = []; S._segmentCounter = 0;
     S.channel = { en: true, vi: true }; S.dualMode = true;
     S.asrLang = defaultAsrLang();
     S.ttsRate = { en: 1.1, vi: 1.1 }; S.ttsSpeaking = false;
