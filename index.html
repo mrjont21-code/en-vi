@@ -7,23 +7,33 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>WebDich v0.9.8 — Voice → Text + Translate + TTS (siêu tốc)</title>
+  <title>WebDich — Voice → Text + Translate + TTS</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://translate.googleapis.com" crossorigin>
   <link rel="preconnect" href="https://api.mymemory.translated.net" crossorigin>
+  <link rel="preconnect" href="https://router.freellm.net" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app">
+    <!-- ===== TITLE BAR (thu gọn) ===== -->
+    <div id="title-bar" class="title-bar" aria-label="WebDich title - long press for API settings">
+      <span class="title-text">webdich</span>
+      <span class="title-sub">v0.9.9 · Dola Seed</span>
+    </div>
+
+    <!-- ===== LIVE VOICE ===== -->
     <div id="live" class="live" aria-live="polite"></div>
+
+    <!-- ===== FINAL COLUMNS ===== -->
     <div class="final">
       <div id="final-en" class="col">
         <div class="col-header">
-          <div class="col-label">Final English</div>
+          <div class="col-label" id="label-en">🇺🇸  ENGLISH</div>
           <div class="rate-ctrl">
             <span>TTS</span>
             <input type="range" id="rate-en" min="1" max="1.2" step="0.05" value="1.1" aria-label="TTS speed English">
@@ -34,7 +44,7 @@
       </div>
       <div id="final-vi" class="col">
         <div class="col-header">
-          <div class="col-label">Final Vietnamese</div>
+          <div class="col-label" id="label-vi">🇻🇳  TIẾNG VIỆT</div>
           <div class="rate-ctrl">
             <span>TTS</span>
             <input type="range" id="rate-vi" min="1" max="1.2" step="0.05" value="1.1" aria-label="TTS speed Vietnamese">
@@ -44,8 +54,10 @@
         <div class="col-body" id="body-vi"></div>
       </div>
     </div>
+
+    <!-- ===== CONTROLS ===== -->
     <div class="mic-row">
-      <button id="ch-en" class="channel-btn on" aria-label="Toggle English channel" aria-pressed="true">EN</button>
+      <button id="ch-en" class="channel-btn on" aria-label="Long press to change language" aria-pressed="true">EN</button>
       <button id="mic" aria-label="Toggle microphone" aria-pressed="false">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect class="mic-stroke" x="9" y="3" width="6" height="11" rx="3"/>
@@ -53,10 +65,81 @@
           <line class="mic-stroke" x1="12" y1="18" x2="12" y2="22"/>
         </svg>
       </button>
-      <button id="ch-vi" class="channel-btn on" aria-label="Toggle Vietnamese channel" aria-pressed="true">VI</button>
+      <button id="ch-vi" class="channel-btn on" aria-label="Long press to change language" aria-pressed="true">VI</button>
     </div>
     <div id="version-badge" class="version-badge"></div>
   </div>
+
+  <!-- ===== MODAL: API SETTINGS (ẩn, long press title để mở) ===== -->
+  <div id="api-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>⚙️ Cấu hình Dola Seed API</h3>
+        <button class="modal-close" data-close="api-modal" type="button">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="api-guide">
+          <p><strong>📌 Hướng dẫn lấy API Key miễn phí:</strong></p>
+          <ol>
+            <li>Truy cập <a href="https://freellm.net" target="_blank" rel="noopener">freellm.net</a></li>
+            <li>Đăng ký tài khoản miễn phí (không cần thẻ tín dụng)</li>
+            <li>Lấy API Key từ dashboard</li>
+            <li>Dán vào ô bên dưới → Lưu</li>
+          </ol>
+          <p class="api-note">💡 Mô hình: <code>kilo-code/bytedance-seed-dola-seed-2-0-pro:free</code><br>
+          Giới hạn: ~200 yêu cầu/giờ · Hoàn toàn miễn phí</p>
+        </div>
+        <div class="form-group">
+          <label for="api-key-input">API Key:</label>
+          <input type="password" id="api-key-input" placeholder="sk-..." autocomplete="off">
+          <button class="toggle-visibility" id="toggle-api-key" type="button">👁</button>
+        </div>
+        <div class="form-group">
+          <label for="api-provider-select">Nhà cung cấp:</label>
+          <select id="api-provider-select">
+            <option value="freellm">FreeLLM / Kilo Code (miễn phí)</option>
+            <option value="synthorai">Synthorai ($1 free credit)</option>
+            <option value="apiyi">APIYi (Seed 2.1 Turbo)</option>
+            <option value="byteplus">BytePlus ModelArk (chính thức)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="dola-enabled" checked>
+            Bật Dola Seed làm nhà cung cấp dịch thuật ưu tiên
+          </label>
+        </div>
+        <div id="api-status" class="api-status"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-close="api-modal" type="button">Đóng</button>
+        <button class="btn-primary" id="save-api-settings" type="button">💾 Lưu cấu hình</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: CHỌN NGÔN NGỮ (long press nút EN/VI) ===== -->
+  <div id="lang-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="lang-modal-title">🌐 Chọn ngôn ngữ</h3>
+        <button class="modal-close" data-close="lang-modal" type="button">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="lang-search">
+          <input type="text" id="lang-search" placeholder="Tìm ngôn ngữ...">
+        </div>
+        <div id="lang-list" class="lang-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" data-close="lang-modal" type="button">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LONG PRESS FEEDBACK ===== -->
+  <div id="press-feedback" class="press-feedback" aria-hidden="true"></div>
+
   <script src="js/state.js"></script>
   <script src="js/text.js"></script>
   <script src="js/language.js"></script>
