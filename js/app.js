@@ -1,19 +1,8 @@
-/* WebDich v0.9.8 — app.js: controller only.
- *
- * v0.9.8 — per user request: METHOD B architecture.
- *   - KEEPS segmentDual word-level language routing (correct column placement)
- *   - NEW: every segment gets a global order stamp; TTS queue speaks strictly
- *     in time order, NOT per-column. Male voice = EN, female voice = VI.
- *   - NEW: pipeline overlap — each segment starts translating immediately when
- *     created (parallel with TTS speaking). When TTS finishes, the next segment
- *     is usually already translated → zero perceived gap.
- *   - NEW: PWA support (service worker + PNG icons) for installable app.
- *   - 1 segment = exactly 1 TTS (guarded by segment.spoken + dedup key).
- *
- * All v0.9.3→v0.9.7 improvements retained: dual-ASR default, early-commit,
- * race translate, loser-abort, phrasebook, LRU+localStorage, unsigned VI lexicon,
- * ASR-contraction idioms, onspeechend+onaudioend, ttsSpeaking=immediate,
- * onend identity, onerror en-US fallback, MyMemory same-lang fix.
+/* WebDich v0.9.9 — app.js: controller.
+ * v0.9.9 updates:
+ *  - Dynamic language pairs from state.colLanguages
+ *  - toggleChannel() exported for UI click handling
+ *  - Dola Seed API integration via translation module
  */
 (function (root) {
   'use strict';
@@ -25,9 +14,8 @@
   }
   var CHUNK_MS = 2000, DUAL_WAIT_MAX_MS = 180, STRONG_SCORE = 1.4, PAUSE_MS = 280;
   var SPECULATIVE_STABLE_MS = 150, SPECULATIVE_MIN_WORDS = 3, SPEECH_END_FALLBACK_MS = 1500;
-  var VERSION = 'v0.9.8', BUILD = '20260913-1000';
+  var VERSION = 'v0.9.9', BUILD = '20260915-001';
   var _asrFallbackTried = false;
-
   if (state.chunkMode === undefined) state.chunkMode = true;
 
   function log() {
@@ -56,46 +44,38 @@
     return viLen > enLen ? 'vi' : (enLen > viLen ? 'en' : 'en');
   }
 
-  // =========================================================================
-  // v0.9.8 — TTS QUEUE SYSTEM (time-ordered, pipeline overlap)
-  // =========================================================================
-
-  // v0.9.8: create a segment entry, start translating immediately (overlap),
-  // and try to speak if TTS is idle and this is next in order.
-  function createAndProcessSegment(lang, textStr, cell) {
+  function createAndProcessSegment(cellKey, textStr, cell) {
     if (!textStr) return;
     state._segmentCounter++;
-    var from = lang, to = (lang === 'vi') ? 'en' : 'vi';
-    var gender = (lang === 'vi') ? 'female' : 'male';
+    var sourceLang = state.colLanguages[cellKey];
+    var otherKey = cellKey === 'en' ? 'vi' : 'en';
+    var targetLang = state.colLanguages[otherKey];
+    var from = sourceLang.code;
+    var to = targetLang.code;
+    var gender = (cellKey === 'vi') ? 'female' : 'male';
     var seg = {
       order: state._segmentCounter,
-      lang: lang,
+      lang: from,
       text: textStr,
       trans: '',
       spoken: false,
       cell: cell,
       from: from,
       to: to,
-      gender: gender
+      gender: gender,
+      ttsLang: targetLang.tts
     };
     state.segments.push(seg);
-    log('createSegment', '#' + seg.order, lang, '|', textStr.substring(0, 50));
-
-    // Start translating IMMEDIATELY — pipeline overlap with ongoing TTS
+    log('createSegment', '#' + seg.order, from + '→' + to, '|', textStr.substring(0, 50));
     translation.translate(textStr, from, to, function (t) {
       if (!t) return;
       seg.trans = t;
       ui.renderRows();
-      // If TTS is idle and this is the next unspoken segment in order, speak now
       trySpeakNextSegment();
     });
-
-    // Also try to speak now if TTS is idle (in case phrasebook/cache hit is sync)
     trySpeakNextSegment();
   }
 
-  // v0.9.8: scan segments in time order; speak first unspoken + translated one.
-  // Guarantees strict time order and 1 segment = 1 TTS.
   function trySpeakNextSegment() {
     if (state.ttsSpeaking) return;
     for (var i = 0; i < state.segments.length; i++) {
@@ -110,18 +90,11 @@
   function speakSegment(seg) {
     if (seg.spoken) return;
     seg.spoken = true;
-    log('speakSegment', '#' + seg.order, seg.gender, seg.to, '|', seg.trans.substring(0, 50));
-    tts.speak(seg.trans, seg.to, seg.gender, onTtsEnd);
+    log('speakSegment', '#' + seg.order, seg.gender, seg.ttsLang, '|', seg.trans.substring(0, 50));
+    tts.speak(seg.trans, seg.ttsLang, seg.gender, onTtsEnd);
   }
 
-  function onTtsEnd() {
-    // Immediately try to speak the next queued segment
-    trySpeakNextSegment();
-  }
-
-  // =========================================================================
-  // handleIncrement — now also creates TTS queue segments
-  // =========================================================================
+  function onTtsEnd() { trySpeakNextSegment(); }
 
   function handleIncrement(seg) {
     seg = text.normalizeText(seg);
@@ -132,13 +105,9 @@
       for (var i = 0; i < segs.length; i++) {
         var s = segs[i];
         var cellKey;
-        if (s.lang === 'unknown') {
-          cellKey = dominantChannel();
-        } else {
-          cellKey = (s.lang === 'vi') ? 'vi' : 'en';
-        }
+        if (s.lang === 'unknown') cellKey = dominantChannel();
+        else cellKey = (s.lang === 'vi') ? 'vi' : 'en';
         appendToCell(cellKey, s.text);
-        // v0.9.8: create TTS queue segment for each language segment
         createAndProcessSegment(cellKey, s.text, state.activeRow[cellKey]);
       }
     } else {
@@ -150,13 +119,9 @@
     var idioms = WD.idioms || (typeof require !== 'undefined' && require('./idioms.js'));
     if (idioms && idioms.detectVi) state.activeRow.vi.idiom = state.activeRow.vi.final ? idioms.detectVi(state.activeRow.vi.final).join('; ') : '';
     if (idioms && idioms.detectEn) state.activeRow.en.idiom = state.activeRow.en.final ? idioms.detectEn(state.activeRow.en.final).join('; ') : '';
-    // v0.9.8: still schedule row-level translate for UI display (column translation)
     translation.scheduleTranslateActive(120, onTranslatedDisplayLegacy);
   }
 
-  // Legacy: still used for per-cell UI translation display.
-  // In legacy test mode (chunkMode=false), also speaks TTS.
-  // In runtime chunk mode, TTS is exclusively handled by segment queue.
   function onTranslatedDisplayLegacy(cell, toLang) {
     ui.renderRows();
     if (cell && cell._row && !cell._row.finalized) return;
@@ -167,10 +132,6 @@
     }
   }
 
-  // =========================================================================
-  // v0.9.7 chunk mode path (preserved for option switching)
-  // =========================================================================
-
   function commitChunk(winner) {
     var rawText = text.normalizeText(winner.text);
     if (!rawText) return;
@@ -178,7 +139,6 @@
     var stripped = text.stripCommittedPrefix(rawText, state.committedTail);
     if (!stripped) return;
     state.committedTail = text.appendCommitted(stripped, state.committedTail);
-
     var row = state.newRow();
     attachRowRefs(row);
     row.finalized = true;
@@ -195,22 +155,15 @@
     clearTimeout(state.commitTimer);
     ui.renderRows();
     log('commitChunk', { lang: lang, text: stripped.substring(0, 60) });
-    // v0.9.8: create a single segment for the whole chunk
     createAndProcessSegment(cellKey, stripped, row[cellKey]);
     if (!state.dualMode) adaptAsrLanguage(lang);
   }
 
-  // =========================================================================
-  // Shared
-  // =========================================================================
-
   function finalizeRow(row) {
     if (!row) return;
     row.finalized = true;
-    // v0.9.8: segment queue handles TTS; this just triggers last-chance UI translation
     translation.translateRow(row, onTranslatedDisplayLegacy);
     ui.renderRows();
-    // Also try to speak any segment whose translation arrived while row was open
     trySpeakNextSegment();
   }
 
@@ -240,11 +193,8 @@
     state.pending = { en: null, vi: null };
     var winner = language.pickWinner(en, vi);
     if (!winner) return;
-    if (state.chunkMode) {
-      commitChunk(winner);
-    } else {
-      commitWinnerLegacy(winner);
-    }
+    if (state.chunkMode) commitChunk(winner);
+    else commitWinnerLegacy(winner);
   }
 
   function commitWinnerLegacy(winner) {
@@ -264,12 +214,8 @@
       log('adaptAsrLanguage init streak', state._langStreak);
       if (state.asrLang === target) return;
     }
-    if (state._langStreak.lang === target) {
-      state._langStreak.count++;
-    } else {
-      state._langStreak = { lang: target, count: 1 };
-      return;
-    }
+    if (state._langStreak.lang === target) state._langStreak.count++;
+    else { state._langStreak = { lang: target, count: 1 }; return; }
     if (state._langStreak.count >= 2) {
       state._langStreak.count = 2;
       state.asrLang = target;
@@ -278,10 +224,6 @@
       if (state.recSingle) { try { state.recSingle.stop(); } catch (e) {} }
     }
   }
-
-  // =========================================================================
-  // ASR result handlers
-  // =========================================================================
 
   function onDualResult(lang, e) {
     if (state.ttsSpeaking) return;
@@ -297,11 +239,8 @@
     state.pending[lang] = cand;
     if (shouldEarlyCommit(lang, cand)) {
       if (state.pending.en && state.pending.vi) { flushPending(); return; }
-      if (state.chunkMode) {
-        commitChunk({ lang: lang, text: cand.text });
-      } else {
-        commitWinnerLegacy({ lang: lang, text: cand.text });
-      }
+      if (state.chunkMode) commitChunk({ lang: lang, text: cand.text });
+      else commitWinnerLegacy({ lang: lang, text: cand.text });
       state.pending[lang] = null;
       return;
     }
@@ -313,10 +252,7 @@
   function onSingleResult(e) {
     if (state.ttsSpeaking) return;
     var r = asr.extractResult(e);
-    if (r.interim) {
-      ui.updateLiveText(r.interim);
-      scheduleSpeculative(r.interim);
-    }
+    if (r.interim) { ui.updateLiveText(r.interim); scheduleSpeculative(r.interim); }
     if (!r.final) return;
     clearTimeout(state.speculativeTimer);
     state.lastStableInterim = '';
@@ -328,11 +264,8 @@
     if (commitLang === 'unknown') commitLang = (state.asrLang === 'vi-VN') ? 'vi' : 'en';
     if (commitLang === 'vi' && !state.channel.vi) commitLang = 'en';
     if (commitLang === 'en' && !state.channel.en) commitLang = 'vi';
-    if (state.chunkMode) {
-      commitChunk({ lang: commitLang, text: normalized });
-    } else {
-      commitWinnerLegacy({ lang: commitLang, text: normalized });
-    }
+    if (state.chunkMode) commitChunk({ lang: commitLang, text: normalized });
+    else commitWinnerLegacy({ lang: commitLang, text: normalized });
   }
 
   function scheduleSpeculative(interim) {
@@ -344,7 +277,8 @@
     state.speculativeTimer = setTimeout(function () {
       var detected = language.detectLanguage(interim);
       var fromLang = detected.lang === 'vi' ? 'vi' : 'en';
-      var toLang = fromLang === 'vi' ? 'en' : 'vi';
+      var otherKey = fromLang === 'en' ? 'vi' : 'en';
+      var toLang = state.colLanguages[otherKey].code;
       translation.translate(interim, fromLang, toLang, function (t) { /* warm cache */ });
     }, SPECULATIVE_STABLE_MS);
   }
@@ -369,6 +303,7 @@
       }
     };
   }
+
   function viHandlers() {
     return {
       onresult: function (e) { onDualResult('vi', e); },
@@ -384,7 +319,6 @@
     var handlers = {};
     var thisRecognizer = null;
     var _speechEndFallbackTimer = null;
-
     function tryFinalizeFromPause() {
       clearTimeout(_speechEndFallbackTimer);
       if (state.activeRow && !state.activeRow.finalized && (state.activeRow.en.final || state.activeRow.vi.final)) {
@@ -393,7 +327,6 @@
       }
       if (state.chunkMode && (state.pending.en || state.pending.vi)) flushPending();
     }
-
     handlers.onresult = onSingleResult;
     handlers.onspeechend = function () {
       log('onspeechend fired');
@@ -449,137 +382,109 @@
     var delay = (Date.now() - state.lastStartTs < 700) ? 600 : 350;
     state.restartTimer = setTimeout(doRestart, delay);
   }
+
   function doRestart() {
     if (!state.micOn || state.userStopped) return;
     if (state.dualMode) {
       if (state.needRestart.en && state.channel.en) { state.needRestart.en = false; asr.startEN(enHandlers()); }
       if (state.needRestart.vi && state.channel.vi) { state.needRestart.vi = false; asr.startVI(viHandlers()); }
     } else {
-      if (!state.recSingle) startSingleRecognizer();
-    }
-  }
-
-  function startSingleRecognizer() {
-    if (!asr.supported || state.recSingle) return;
-    state.lastStartTs = Date.now();
-    try {
       var h = singleHandlers();
-      var r = asr.startSingle(state.asrLang || 'en-US', h);
-      if (r) {
-        state.recSingle = r;
-        h._setRecognizer(r);
-        log('startSingleRecognizer', state.asrLang);
-        asr.startRecognizer(r);
-      }
-    } catch (e) { log('startSingleRecognizer exception', e); state.recSingle = null; }
+      var r = asr.startSingle(state.asrLang, h);
+      if (h._setRecognizer) h._setRecognizer(r);
+    }
+    state.lastStartTs = Date.now();
   }
-
-  function startChunkTimer() {
-    stopChunkTimer();
-    state.chunkTimer = setInterval(function () {
-      if (state.activeRow && !state.activeRow.finalized && (state.activeRow.en.final || state.activeRow.vi.final)) {
-        finalizeRow(state.activeRow);
-      }
-      flushPending();
-    }, CHUNK_MS);
-  }
-  function stopChunkTimer() { if (state.chunkTimer) { clearInterval(state.chunkTimer); state.chunkTimer = null; } }
 
   function startMicrophone() {
-    state.micOn = true; state.userStopped = false; state.viFailed = false; _asrFallbackTried = false;
-    state.committedTail = ''; state.pending = { en: null, vi: null };
-    state.rows = []; state.activeRow = null; state.needRestart = { en: false, vi: false }; state.lastStartTs = 0;
-    state.segments = []; state._segmentCounter = 0;
-    state._lastSpokenTranslation = ''; state._langStreak = null;
-    state.asrLang = state.asrLang || 'en-US';
-    state.ttsSpeaking = false; state.lastStableInterim = '';
-    if (state._ttsUnstickTimer) { clearTimeout(state._ttsUnstickTimer); state._ttsUnstickTimer = null; }
-    if (state._pauseTimer) { clearTimeout(state._pauseTimer); state._pauseTimer = null; }
-    if (state.speculativeTimer) { clearTimeout(state.speculativeTimer); state.speculativeTimer = null; }
-    ui.renderRows(); ui.updateMicUI();
-    startChunkTimer();
-    if (translation.warmConnection) translation.warmConnection();
-    log('startMicrophone, asrLang=', state.asrLang, 'dualMode=', state.dualMode, 'chunkMode=', state.chunkMode);
+    if (state.micOn) return;
+    state.userStopped = false;
+    _asrFallbackTried = false;
+    state.micOn = true;
+    ui.updateMicUI();
+    ui.clearLive();
+    state.lastStartTs = Date.now();
     if (state.dualMode) {
       if (state.channel.en) asr.startEN(enHandlers());
       if (state.channel.vi) asr.startVI(viHandlers());
     } else {
-      startSingleRecognizer();
+      var h = singleHandlers();
+      var r = asr.startSingle(state.asrLang, h);
+      if (h._setRecognizer) h._setRecognizer(r);
     }
+    translation.warmConnection();
+    log('mic ON, dualMode=' + state.dualMode + ', asrLang=' + state.asrLang);
   }
+
   function stopMicrophone() {
-    state.userStopped = true; state.micOn = false;
-    stopChunkTimer();
-    clearTimeout(state.transDebounce); clearTimeout(state.restartTimer); clearTimeout(state.commitTimer);
-    clearTimeout(state._pauseTimer); clearTimeout(state.speculativeTimer);
-    state.needRestart = { en: false, vi: false };
+    state.micOn = false;
+    ui.updateMicUI();
+    ui.clearLive();
+    try {
+      if (state.recEN) { state.recEN.onend = null; state.recEN.stop(); }
+      if (state.recVI) { state.recVI.onend = null; state.recVI.stop(); }
+      if (state.recSingle) { state.recSingle.onend = null; state.recSingle.stop(); }
+    } catch (e) {}
+    state.recEN = state.recVI = state.recSingle = null;
+    clearTimeout(state.restartTimer);
+    clearTimeout(state.commitTimer);
+    clearTimeout(state._pauseTimer);
+    state.pending = { en: null, vi: null };
     if (state.activeRow && !state.activeRow.finalized && (state.activeRow.en.final || state.activeRow.vi.final)) {
       finalizeRow(state.activeRow);
     }
-    if (state.chunkMode && (state.pending.en || state.pending.vi)) flushPending();
-    asr.stopAll();
-    state.recSingle = null;
-    state.ttsSpeaking = false;
-    if (state._ttsUnstickTimer) { clearTimeout(state._ttsUnstickTimer); state._ttsUnstickTimer = null; }
-    ui.updateMicUI(); ui.clearLive(); ui.renderRows();
-    log('stopMicrophone');
+    log('mic OFF');
   }
 
-  function toggleChannel(lang) {
-    var next = !state.channel[lang];
-    if (!next && (lang === 'en' ? !state.channel.vi : !state.channel.en)) return;
-    state.channel[lang] = next;
-    ui.updateChannelUI();
-    if (state.micOn && state.dualMode) {
-      if (!next) {
-        if (lang === 'en') { state.needRestart.en = false; asr.stopEN(); }
-        else { state.needRestart.vi = false; asr.stopVI(); }
-      } else {
-        if (lang === 'en') asr.startEN(enHandlers()); else asr.startVI(viHandlers());
-      }
+  function toggleMicrophone() {
+    if (state.micOn) stopMicrophone(); else startMicrophone();
+  }
+
+  function toggleChannel(colKey) {
+    if (state.micOn) { ui.showStatus('Tắt mic trước khi thay đổi cột'); return; }
+    state.channel[colKey] = !state.channel[colKey];
+    if (!state.channel.en && !state.channel.vi) {
+      state.channel[colKey] = true;
+      ui.showStatus('Phải có ít nhất 1 cột bật');
+      return;
     }
+    ui.updateChannelUI();
+    log('toggleChannel', colKey, '=', state.channel[colKey]);
   }
 
   function init() {
-    if (!ui.el.live) ui.init();
-    ui.updateChannelUI();
-    tts.loadVoices();
-    if (root.speechSynthesis && root.speechSynthesis.onvoiceschanged !== undefined) root.speechSynthesis.onvoiceschanged = tts.loadVoices;
-    ui.bindRateSliders();
-    if (ui.el.mic) ui.el.mic.addEventListener('click', function () { state.micOn ? stopMicrophone() : startMicrophone(); });
-    if (ui.el.chEn) ui.el.chEn.addEventListener('click', function () { toggleChannel('en'); });
-    if (ui.el.chVi) ui.el.chVi.addEventListener('click', function () { toggleChannel('vi'); });
-    ui.updateLiveText('WebDich ' + VERSION + ' · tap mic');
-    if (ui.el.live) ui.el.live.style.opacity = '0.45';
+    ui.init();
     ui.setVersion(VERSION);
-    if (!asr.supported) ui.showStatus('WebDich ' + VERSION + ' · speech recognition not supported here. Use Chrome / Edge over HTTPS or localhost.');
-    log('initialized', VERSION, 'asr.supported=', asr.supported, 'default asrLang=', state.asrLang, 'chunkMode=', state.chunkMode);
+    ui.updateColumnLabels();
+    ui.updateMicUI();
+    ui.updateChannelUI();
+    ui.bindRateSliders();
+    tts.loadVoices();
+    if (root.speechSynthesis) root.speechSynthesis.onvoiceschanged = tts.loadVoices;
+    var micBtn = root.document.getElementById('mic');
+    if (micBtn) micBtn.addEventListener('click', toggleMicrophone);
+    if (state.isDolaEnabled && state.isDolaEnabled()) {
+      log('Dola Seed ENABLED — provider:', state.apiConfig.provider);
+    } else {
+      log('Dola Seed disabled or no API key — using Google + MyMemory only');
+    }
+    ui.showStatus('Nhấn mic để bắt đầu · Giữ lâu để thay đổi ngôn ngữ');
+    setTimeout(function() { ui.clearLive(); }, 3000);
   }
-  if (root.document) root.document.addEventListener ? root.document.addEventListener('DOMContentLoaded', init) : init();
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-      VERSION: VERSION,
-      reset: function () { state.reset(); _asrFallbackTried = false; state.chunkMode = false; },
-      getRows: function () { return state.rows.map(function (r) { return { en: r.en.final, vi: r.vi.final }; }); },
-      onDualResult: onDualResult,
-      onSingleResult: onSingleResult,
-      flushPending: flushPending,
-      handleIncrement: handleIncrement,
-      finalizeRow: finalizeRow,
-      startMicrophone: startMicrophone,
-      stopMicrophone: stopMicrophone,
-      toggleChannel: toggleChannel,
-      pickWinner: language.pickWinner,
-      shouldEarlyCommit: shouldEarlyCommit,
-      _state: state,
-      _attachRowRefs: attachRowRefs,
-      _onTranslatedDisplay: onTranslatedDisplayLegacy,
-      _adaptAsrLanguage: adaptAsrLanguage,
-      _commitChunk: commitChunk,
-      _onTtsEnd: onTtsEnd,
-      _trySpeakNextSegment: trySpeakNextSegment,
-      _createAndProcessSegment: createAndProcessSegment
-    };
+  WD.app = {
+    init: init,
+    toggleChannel: toggleChannel,
+    toggleMicrophone: toggleMicrophone,
+    startMicrophone: startMicrophone,
+    stopMicrophone: stopMicrophone
+  };
+
+  if (root.document && root.document.readyState === 'loading') {
+    root.document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
   }
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = WD.app;
 })(typeof window !== 'undefined' ? window : global);

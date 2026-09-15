@@ -1,11 +1,8 @@
-/* WebDich v0.9.5 — translation.js: Google gtx + MyMemory RACE.
- * v0.9.5 changes:
- *  - Per-provider timeouts: Google 800ms, MyMemory 1500ms (measured: MM p50 ~900ms)
- *  - Abort the LOSER when a good result arrives (saves bandwidth + quota)
- *  - If Google returns identity/empty, do NOT abort MyMemory — let it win
- *  - warmConnection() only warms Google (saves MyMemory daily quota)
- *  - Phrasebook: ~80 common travel phrases EN↔VI — 0ms, 0 network hit
- *  - LRU cache hydrates from localStorage on boot; persists after each successful translate
+/* WebDich v0.9.9 — translation.js: Google + MyMemory + Dola Seed RACE
+ * v0.9.9 updates:
+ *  - Dola Seed API as 3rd provider (priority when enabled)
+ *  - Dynamic language pairs from state.colLanguages
+ *  - 4 Dola providers: FreeLLM, Synthorai, APIYi, BytePlus
  */
 (function (root) {
   'use strict';
@@ -14,10 +11,44 @@
 
   var GOOGLE_TIMEOUT_MS = 800;
   var MM_TIMEOUT_MS = 1500;
+  var DOLA_TIMEOUT_MS = 3000;
   var CACHE_MAX = 200;
   var _cache = new Map();
 
-  // ---------- v0.9.5: Phrasebook — common travel phrases, 0 RTT ----------
+  // ===== DOLA SEED PROVIDERS =====
+  var DOLA_PROVIDERS = {
+    freellm: {
+      name: 'FreeLLM / Kilo Code',
+      baseUrl: 'https://router.freellm.net/v1/chat/completions',
+      model: 'kilo-code/bytedance-seed-dola-seed-2-0-pro:free'
+    },
+    synthorai: {
+      name: 'Synthorai',
+      baseUrl: 'https://api.synthorai.io/v1/chat/completions',
+      model: 'bytedance/dola-seed-2-0-pro'
+    },
+    apiyi: {
+      name: 'APIYi',
+      baseUrl: 'https://api.apiyi.com/v1/chat/completions',
+      model: 'dola-seed-2-1-turbo-260628'
+    },
+    byteplus: {
+      name: 'BytePlus ModelArk',
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+      model: 'doubao-seed-2-0-pro'
+    }
+  };
+
+  // ===== LANGUAGE NAMES FOR DOLA PROMPT =====
+  var LANG_NAMES = {
+    'en': 'English', 'vi': 'Vietnamese', 'zh': 'Chinese (Simplified)',
+    'zh-TW': 'Chinese (Traditional)', 'ja': 'Japanese', 'ko': 'Korean',
+    'fr': 'French', 'de': 'German', 'es': 'Spanish', 'th': 'Thai',
+    'id': 'Indonesian', 'ms': 'Malay', 'pt': 'Portuguese', 'ru': 'Russian',
+    'ar': 'Arabic', 'tr': 'Turkish', 'it': 'Italian', 'fil': 'Filipino'
+  };
+
+  // ===== PHRASEBOOK =====
   var PHRASEBOOK_EN = {
     "hello":"xin chào","hi":"xin chào","good morning":"chào buổi sáng","good evening":"chào buổi tối",
     "goodbye":"tạm biệt","bye":"tạm biệt","see you later":"hẹn gặp lại","thank you":"cảm ơn",
@@ -78,12 +109,14 @@
   function cacheKey(from, to, textStr) {
     return from + '|' + to + '|' + textStr.trim().toLowerCase();
   }
+
   function cacheGet(from, to, textStr) {
     var k = cacheKey(from, to, textStr);
     var entry = _cache.get(k);
     if (entry) { _cache.delete(k); _cache.set(k, entry); return entry.trans; }
     return null;
   }
+
   var _persistTimer = null;
   function persistCache() {
     if (_persistTimer) return;
@@ -98,6 +131,7 @@
       } catch (e) {}
     }, 1000);
   }
+
   function cachePut(from, to, textStr, trans) {
     var k = cacheKey(from, to, textStr);
     _cache.delete(k);
@@ -108,6 +142,7 @@
     }
     persistCache();
   }
+
   function hydrateCache() {
     try {
       if (root.localStorage && root.localStorage.wdTransCache) {
@@ -135,10 +170,12 @@
     return from;
   }
 
-  function fetchWithTimeout(url, timeoutMs) {
+  function fetchWithTimeout(url, timeoutMs, options) {
     var controller = new AbortController();
     var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
-    var promise = fetch(url, { signal: controller.signal }).then(function (r) {
+    var fetchOpts = options || {};
+    fetchOpts.signal = controller.signal;
+    var promise = fetch(url, fetchOpts).then(function (r) {
       clearTimeout(timer);
       return r;
     }).catch(function (e) {
@@ -149,11 +186,11 @@
     return promise;
   }
 
+  // ===== GOOGLE =====
   function fetchGoogle(textStr, from, to) {
     var sl = effectiveSourceLang(textStr, from);
-    // v0.9.6: if source lang ends up same as target, use explicit 'from' (avoids identity)
     if (sl === to) sl = from;
-    if (sl === to) sl = 'auto'; // last resort
+    if (sl === to) sl = 'auto';
     var gtx = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sl + '&tl=' + to + '&dt=t&q=' + encodeURIComponent(textStr);
     var p = fetchWithTimeout(gtx, GOOGLE_TIMEOUT_MS);
     return p.then(function (r) { return r.json(); }).then(function (j) {
@@ -169,18 +206,17 @@
     });
   }
 
+  // ===== MYMEMORY =====
   function fetchMyMemory(textStr, from, to) {
     var fromLang = from;
     try { if (LANG && LANG.detectLanguage) { var d = LANG.detectLanguage(textStr); if (d.lang === 'vi' || d.lang === 'en') fromLang = d.lang; } } catch (e) {}
-    // v0.9.6: CRITICAL FIX — MyMemory returns "PLEASE SELECT TWO DISTINCT LANGUAGES" if from===to
-    if (fromLang === to) fromLang = from; // fall back to explicit source lang
-    if (fromLang === to) { throw { code: 'same-lang', _controller: null }; } // still same? give up
+    if (fromLang === to) fromLang = from;
+    if (fromLang === to) { throw { code: 'same-lang', _controller: null }; }
     var mm = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(textStr) + '&langpair=' + fromLang + '|' + to;
     var p = fetchWithTimeout(mm, MM_TIMEOUT_MS);
     return p.then(function (r) { return r.json(); }).then(function (j) {
       var t = (j && j.responseData && j.responseData.translatedText) || '';
       if (!t) throw { code: 'empty', _controller: p._controller };
-      // v0.9.6: filter ALL known MyMemory error strings
       var tUpper = t.toUpperCase();
       if (tUpper.indexOf('MYMEMORY WARNING') >= 0 ||
           tUpper.indexOf('PLEASE SELECT TWO DISTINCT LANGUAGES') >= 0 ||
@@ -199,6 +235,56 @@
     });
   }
 
+  // ===== DOLA SEED =====
+  function fetchDolaSeed(textStr, from, to) {
+    if (!state || !state.isDolaEnabled || !state.isDolaEnabled()) {
+      return Promise.reject({ code: 'dola-disabled', _controller: null });
+    }
+    var cfg = state.apiConfig;
+    var provider = DOLA_PROVIDERS[cfg.provider];
+    if (!provider) {
+      return Promise.reject({ code: 'dola-provider-unknown', _controller: null });
+    }
+    var fromName = LANG_NAMES[from] || from;
+    var toName = LANG_NAMES[to] || to;
+    var systemPrompt = 'You are a professional translator. Translate the following text from ' +
+      fromName + ' to ' + toName + '. Return ONLY the translated text, no explanations, no extra content.';
+
+    var p = fetchWithTimeout(provider.baseUrl, DOLA_TIMEOUT_MS, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + cfg.key.trim()
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: textStr }
+        ],
+        stream: false,
+        temperature: 0.3
+      })
+    });
+
+    return p.then(function (r) {
+      if (!r.ok) throw { code: 'dola-http-' + r.status, _controller: p._controller };
+      return r.json();
+    }).then(function (j) {
+      var t = '';
+      if (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) {
+        t = j.choices[0].message.content.trim();
+      }
+      if (!t) throw { code: 'dola-empty', _controller: p._controller };
+      if (isNoOp(textStr, t)) throw { code: 'identity', _controller: p._controller };
+      return { t: t, provider: 'dola', _controller: p._controller };
+    }).catch(function (e) {
+      if (e && e._controller !== undefined) throw e;
+      throw { code: e && e.code || e.message || 'dola-network', _controller: p._controller };
+    });
+  }
+
+  // ===== MAIN TRANSLATE: 3 providers race =====
   function translate(textStr, from, to, cb) {
     if (!textStr) { cb(''); return; }
     var norm = textStr.trim();
@@ -208,58 +294,72 @@
     if (cached) { cb(cached); return; }
 
     var done = false;
-    var googleDone = false, mmDone = false;
-    var googleResult = null, mmResult = null;
+    var results = { google: null, mm: null, dola: null };
+    var finished = { google: false, mm: false, dola: false };
 
-    function finish(t) {
+    function finish(t, provider) {
       if (done) return;
       done = true;
       if (t) { cachePut(from, to, norm, t); cb(t); } else { cb(''); }
-    }
-
-    function abortOther(winnerProvider) {
+      // Abort losers
       try {
-        if (winnerProvider === 'google' && mmResult && mmResult._controller && !mmDone) {
-          mmResult._controller.abort();
-        }
-        if (winnerProvider === 'mm' && googleResult && googleResult._controller && !googleDone) {
-          googleResult._controller.abort();
+        for (var key in results) {
+          if (key !== provider && results[key] && results[key]._controller && !finished[key]) {
+            try { results[key]._controller.abort(); } catch (e) {}
+          }
         }
       } catch (e) {}
     }
 
-    function checkBothFailed() {
-      if (googleDone && mmDone && !done) {
+    function checkAllFailed() {
+      if (finished.google && finished.mm && finished.dola && !done) {
+        // Last resort: Google with auto
         try {
           var gtx2 = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + to + '&dt=t&q=' + encodeURIComponent(textStr);
           fetchWithTimeout(gtx2, GOOGLE_TIMEOUT_MS).then(function (r) { return r.json(); }).then(function (j) {
             var t = '';
             if (j && j[0]) j[0].forEach(function (s) { if (s && s[0]) t += s[0]; });
-            if (t && !isNoOp(textStr, t)) finish(t); else finish('');
-          }).catch(function () { finish(''); });
-        } catch (e) { finish(''); }
+            if (t && !isNoOp(textStr, t)) finish(t, 'google-fallback'); else cb('');
+          }).catch(function () { cb(''); });
+        } catch (e) { cb(''); }
       }
     }
 
-    googleResult = fetchGoogle(textStr, from, to);
-    googleResult.then(function (r) {
-      googleDone = true;
-      finish(r.t);
-      abortOther('google');
+    // Google
+    results.google = fetchGoogle(textStr, from, to);
+    results.google.then(function (r) {
+      finished.google = true;
+      // Nếu Dola chưa về và Google OK, dùng Google (nhanh hơn)
+      if (!done) finish(r.t, 'google');
     }).catch(function (e) {
-      googleDone = true;
-      if (e && e._doNotAbortOther) { /* Google identity: let MM run */ }
-      checkBothFailed();
+      finished.google = true;
+      checkAllFailed();
     });
 
-    mmResult = fetchMyMemory(textStr, from, to);
-    mmResult.then(function (r) {
-      mmDone = true;
-      if (!done) { finish(r.t); abortOther('mm'); }
+    // MyMemory
+    results.mm = fetchMyMemory(textStr, from, to);
+    results.mm.then(function (r) {
+      finished.mm = true;
+      if (!done) finish(r.t, 'mm');
     }).catch(function () {
-      mmDone = true;
-      checkBothFailed();
+      finished.mm = true;
+      checkAllFailed();
     });
+
+    // Dola Seed (ưu tiên nếu bật)
+    if (state && state.isDolaEnabled && state.isDolaEnabled()) {
+      results.dola = fetchDolaSeed(textStr, from, to);
+      results.dola.then(function (r) {
+        finished.dola = true;
+        // Dola có chất lượng cao hơn → luôn ưu tiên nếu về trước hoặc sau Google
+        finish(r.t, 'dola');
+      }).catch(function () {
+        finished.dola = true;
+        checkAllFailed();
+      });
+    } else {
+      finished.dola = true;
+    }
   }
 
   function translateCell(cell, from, to, onTranslated) {
@@ -276,8 +376,11 @@
 
   function translateRow(row, onTranslated) {
     if (!row) return;
-    translateCell(row.en, 'en', 'vi', onTranslated);
-    translateCell(row.vi, 'vi', 'en', onTranslated);
+    // v0.9.9: Dùng ngôn ngữ động từ state.colLanguages
+    var enLang = state.colLanguages.en.code;
+    var viLang = state.colLanguages.vi.code;
+    translateCell(row.en, enLang, viLang, onTranslated);
+    translateCell(row.vi, viLang, enLang, onTranslated);
   }
 
   function scheduleTranslateActive(ms, onTranslated) {
@@ -296,9 +399,11 @@
   var mod = {
     translate: translate, translateCell: translateCell, translateRow: translateRow,
     scheduleTranslateActive: scheduleTranslateActive, warmConnection: warmConnection,
+    fetchDolaSeed: fetchDolaSeed,
     _cache: _cache, _cacheGet: cacheGet, _cachePut: cachePut, _isNoOp: isNoOp,
     _phrasebookEN: PHRASEBOOK_EN, _phrasebookVI: PHRASEBOOK_VI,
-    _phrasebookLookup: phrasebookLookup
+    _phrasebookLookup: phrasebookLookup,
+    _providers: DOLA_PROVIDERS
   };
   root.WD = root.WD || {};
   root.WD.translation = mod;
